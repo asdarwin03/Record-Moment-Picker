@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stt-output.schema.json",
+  "title": "STT Output",
+  "description": "STT module output: raw transcript text with timestamp.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["time", "text"],
+    "additionalProperties": false,
+    "properties": {
+      "time": {
+        "type": "number",
+        "minimum": 0,
+        "description": "Start time of the utterance in seconds."
+      },
+      "text": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Raw transcribed text."
+      }
+    }
+  }
+}

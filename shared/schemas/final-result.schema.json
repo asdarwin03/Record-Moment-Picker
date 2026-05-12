@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "final-result.schema.json",
+  "title": "Final Result",
+  "description": "Final JSON result used by backend storage and frontend visualization.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "sid",
+      "start_time",
+      "end_time",
+      "title",
+      "summary",
+      "texts",
+      "important",
+      "clues"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "sid": {
+        "type": "string",
+        "pattern": "^segment_[0-9]{2,}$",
+        "description": "Segment ID, such as segment_01."
+      },
+      "start_time": {
+        "type": "number",
+        "minimum": 0,
+        "description": "Start time of the segment in seconds."
+      },
+      "end_time": {
+        "type": "number",
+        "minimum": 0,
+        "description": "End time of the segment in seconds."
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Short title of the segment."
+      },
+      "summary": {
+        "type": "array",
+        "description": "List of summary sentences for this segment.",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "texts": {
+        "type": "array",
+        "description": "Transcript items included in this segment.",
+        "items": {
+          "type": "object",
+          "required": ["t_id", "time", "text"],
+          "additionalProperties": false,
+          "properties": {
+            "t_id": {
+              "type": "string",
+              "pattern": "^[0-9]{3,}$",
+              "description": "Transcript item ID."
+            },
+            "time": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Start time of the transcript item in seconds."
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Transcript text."
+            }
+          }
+        }
+      },
+      "important": {
+        "type": "array",
+        "description": "Important moments in this segment.",
+        "items": {
+          "type": "object",
+          "required": ["time", "title"],
+          "additionalProperties": false,
+          "properties": {
+            "time": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Timestamp of the important moment in seconds."
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Short title of the important moment."
+            }
+          }
+        }
+      },
+      "clues": {
+        "type": "array",
+        "description": "Evidence mapping between summary sentences and transcript item IDs.",
+        "items": {
+          "type": "object",
+          "required": ["summary_index", "clue"],
+          "additionalProperties": false,
+          "properties": {
+            "summary_index": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "0-based index of the summary sentence."
+            },
+            "clue": {
+              "type": "array",
+              "description": "List of transcript item IDs that support the summary sentence.",
+              "items": {
+                "type": "string",
+                "pattern": "^[0-9]{3,}$"
+              },
+              "minItems": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

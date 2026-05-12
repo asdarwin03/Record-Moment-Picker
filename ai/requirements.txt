@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+pytest
+
+# Optional STT providers.
+# Install only the provider selected by STT_PROVIDER.
+# openai-whisper
+# whisperx
+# faster-whisper
