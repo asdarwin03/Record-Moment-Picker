@@ -1,6 +1,23 @@
 from pathlib import Path
+from typing import Callable
 
+from app.core.config import settings
 from app.core.exceptions import STTProcessingError
+from app.schemas.stt import validate_stt_output
+from app.modules.stt.providers import faster_whisper, openai_stt, whisper, whisperx
+
+
+ProviderTranscribe = Callable[[str | Path], list[dict]]
+
+
+_PROVIDER_MAP: dict[str, ProviderTranscribe] = {
+    "whisper": whisper.transcribe,
+    "whisperx": whisperx.transcribe,
+    "faster_whisper": faster_whisper.transcribe,
+    "faster-whisper": faster_whisper.transcribe,
+    "openai_stt": openai_stt.transcribe,
+    "openai-stt": openai_stt.transcribe,
+}
 
 
 def transcribe_audio(audio_path: str | Path) -> list[dict]:
@@ -13,6 +30,26 @@ def transcribe_audio(audio_path: str | Path) -> list[dict]:
       {"time": 41, "text": "안냥하세요, RecordMomentPicker 발표를 시작하겠습니다."}
     ]
     """
-    # TODO(stt 담당): settings.stt_provider 값에 따라 whisper, whisperx, faster_whisper provider 중 하나를 선택해서 호출하기.
-    # TODO(stt 담당): provider 결과를 shared/schemas/stt-output.schema.json에 맞게 검증하고 list[dict]로 반환하기.
-    raise STTProcessingError("STT service is not implemented yet.")
+    provider_name = settings.stt_provider
+    transcribe = _get_provider(provider_name)
+
+    try:
+        stt_output = transcribe(audio_path)
+        validated_output = validate_stt_output(stt_output)
+        return [item.model_dump() for item in validated_output]
+    except STTProcessingError:
+        raise
+    except Exception as error:
+        raise STTProcessingError(f"STT processing failed with provider '{provider_name}': {error}") from error
+
+
+def _get_provider(provider_name: str) -> ProviderTranscribe:
+    normalized_name = provider_name.strip().lower()
+
+    if normalized_name not in _PROVIDER_MAP:
+        available = ", ".join(sorted(_PROVIDER_MAP))
+        raise STTProcessingError(
+            f"Unsupported STT provider: {provider_name}. Available providers: {available}"
+        )
+
+    return _PROVIDER_MAP[normalized_name]
