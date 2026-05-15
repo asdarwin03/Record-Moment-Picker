@@ -43,7 +43,9 @@ def transcribe(
         )
         items = [
             {
-                "time": float(segment.start),
+                "t_id": f"stt_{index + 1:03d}",
+                "start_time": float(segment.start),
+                "end_time": float(segment.end),
                 "text": segment.text.strip(),
             }
             for segment in segments
