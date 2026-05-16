@@ -13,11 +13,21 @@ class RefinedTextItem(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    time: NonNegativeFloat = Field(..., description="Utterance start time in seconds.")
+    t_id: NonEmptyString = Field(..., description="Original STT text id.")
+    start_time: NonNegativeFloat = Field(..., description="Utterance start time in seconds.")
+    end_time: NonNegativeFloat = Field(..., description="Utterance end time in seconds.")
     text: NonEmptyString = Field(..., description="Corrected transcript text.")
 
 
-RefinedTextOutput = list[RefinedTextItem]
+class RefinedTextOutput(BaseModel):
+    """Refined transcript output with preserved timing metadata."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    audio_duration: NonNegativeFloat = Field(..., description="Total audio duration in seconds.")
+    texts: list[RefinedTextItem] = Field(default_factory=list)
+
+
 RefinedTextOutputAdapter = TypeAdapter(RefinedTextOutput)
 
 
