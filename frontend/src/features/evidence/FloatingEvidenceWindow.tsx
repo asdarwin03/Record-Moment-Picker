@@ -95,7 +95,7 @@ export function FloatingEvidenceWindow({
               <section className="evidence-group" key={group.segmentSid}>
                 <div className="evidence-group-head">
                   <div>
-                    <span>{formatTime(group.texts[0]?.time ?? 0)}</span>
+                    <span>{formatTime(group.texts[0]?.start_time ?? 0)}</span>
                     <h4>{group.segmentTitle}</h4>
                   </div>
                   <button
@@ -116,11 +116,11 @@ export function FloatingEvidenceWindow({
                       key={text.t_id}
                       type="button"
                       onClick={() => {
-                        onSeek(text.time)
+                        onSeek(text.start_time)
                         onOpenSegmentDocument(text.segmentSid, text.t_id)
                       }}
                     >
-                      <strong>{formatTime(text.time)}</strong>
+                      <strong>{formatTime(text.start_time)}</strong>
                       <span>{text.text}</span>
                     </button>
                   ))}

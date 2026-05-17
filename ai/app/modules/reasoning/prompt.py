@@ -3,7 +3,7 @@ You add evidence clues to structured transcript segments.
 
 Task: Link existing summary sentences to existing transcript t_id values.
 
-Input: {"segments":[...]}. Each segment has sid, summary, texts. Each text has t_id, time, text. time is numeric seconds.
+Input: {"segments":[...]}. Each segment has sid, summary, texts. Each text has t_id, start_time, end_time, text. start_time and end_time are numeric seconds.
 
 Return only this clue mapping:
 {"segments":[{"sid":"segment_01","clues":[{"summary_index":0,"clue":[{"t_id":"001","score":1.0}]}]}]}
@@ -18,7 +18,7 @@ Hard output rules:
 - summary_index is 0-based; return clue objects in increasing summary_index order.
 - clue item keys: t_id, score only.
 - t_id must exist in the same segment's texts. Never invent t_id or use another segment's t_id.
-- Do not return start_time, end_time, title, summary, texts, important, time, or text.
+- Do not return start_time, end_time, title, summary, texts, important, or text.
 - Do not rewrite summary/text. Do not create new summaries.
 
 Evidence rules:
@@ -46,19 +46,19 @@ Examples:
 
 Example A:
 Input:
-{"segments":[{"sid":"segment_a","summary":["Backend calls AI Service via HTTP API and stores the analysis result in DB"],"texts":[{"t_id":"401","time":241,"text":"Frontend sends the upload request to Backend."},{"t_id":"402","time":245,"text":"Backend calls AI Service's HTTP API to request recording analysis."},{"t_id":"403","time":251,"text":"After analysis is complete, Backend stores the Final JSON result in DB."},{"t_id":"404","time":257,"text":"AI Service should not access DB directly; it only returns the result."}]}]}
+{"segments":[{"sid":"segment_a","summary":["Backend calls AI Service via HTTP API and stores the analysis result in DB"],"texts":[{"t_id":"401","start_time":241,"end_time":244,"text":"Frontend sends the upload request to Backend."},{"t_id":"402","start_time":245,"end_time":250,"text":"Backend calls AI Service's HTTP API to request recording analysis."},{"t_id":"403","start_time":251,"end_time":256,"text":"After analysis is complete, Backend stores the Final JSON result in DB."},{"t_id":"404","start_time":257,"end_time":260,"text":"AI Service should not access DB directly; it only returns the result."}]}]}
 Output:
 {"segments":[{"sid":"segment_a","clues":[{"summary_index":0,"clue":[{"t_id":"402","score":0.8},{"t_id":"403","score":0.8}]}]}]}
 
 Example B:
 Input:
-{"segments":[{"sid":"segment_b","summary":["Team members showed an overall negative reaction to the design draft"],"texts":[{"t_id":"1301","time":781,"text":"Let's hear opinions about the design draft."},{"t_id":"1302","time":785,"text":"Some said the first impression felt cramped."},{"t_id":"1303","time":790,"text":"Some said the main color does not match the service concept."},{"t_id":"1304","time":795,"text":"There was also feedback that the font is hard to read."},{"t_id":"1305","time":801,"text":"Overall, the reaction was that the draft needs to be reworked."},{"t_id":"1306","time":807,"text":"So we will ask the designer for revisions."}]}]}
+{"segments":[{"sid":"segment_b","summary":["Team members showed an overall negative reaction to the design draft"],"texts":[{"t_id":"1301","start_time":781,"end_time":784,"text":"Let's hear opinions about the design draft."},{"t_id":"1302","start_time":785,"end_time":789,"text":"Some said the first impression felt cramped."},{"t_id":"1303","start_time":790,"end_time":794,"text":"Some said the main color does not match the service concept."},{"t_id":"1304","start_time":795,"end_time":800,"text":"There was also feedback that the font is hard to read."},{"t_id":"1305","start_time":801,"end_time":806,"text":"Overall, the reaction was that the draft needs to be reworked."},{"t_id":"1306","start_time":807,"end_time":810,"text":"So we will ask the designer for revisions."}]}]}
 Output:
 {"segments":[{"sid":"segment_b","clues":[{"summary_index":0,"clue":[{"t_id":"1302","score":0.8},{"t_id":"1303","score":0.8},{"t_id":"1304","score":0.8},{"t_id":"1305","score":1.0}]}]}]}
 
 Example C:
 Input:
-{"segments":[{"sid":"segment_c","summary":["A meme is explained as content that users repeatedly modify and spread","This project will analyze meme diffusion patterns"],"texts":[{"t_id":"701","time":421,"text":"A meme is content that people repeatedly modify, share, and spread."},{"t_id":"702","time":426,"text":"In online communities, the same image is often changed with different captions."},{"t_id":"703","time":432,"text":"In this project, we will analyze how such memes spread through different paths."}]}]}
+{"segments":[{"sid":"segment_c","summary":["A meme is explained as content that users repeatedly modify and spread","This project will analyze meme diffusion patterns"],"texts":[{"t_id":"701","start_time":421,"end_time":425,"text":"A meme is content that people repeatedly modify, share, and spread."},{"t_id":"702","start_time":426,"end_time":431,"text":"In online communities, the same image is often changed with different captions."},{"t_id":"703","start_time":432,"end_time":437,"text":"In this project, we will analyze how such memes spread through different paths."}]}]}
 Output:
 {"segments":[{"sid":"segment_c","clues":[{"summary_index":0,"clue":[{"t_id":"701","score":1.0},{"t_id":"702","score":0.6}]},{"summary_index":1,"clue":[{"t_id":"703","score":1.0}]}]}]}
 """.strip()

@@ -22,5 +22,6 @@ def test_refine_text_returns_refined_text_contract():
 
     validated = validate_refined_text_output(result)
     assert len(validated) == len(stt_items)
-    assert [item.time for item in validated] == [item["time"] for item in stt_items]
+    assert [item.start_time for item in validated] == [item["start_time"] for item in stt_items]
+    assert [item.end_time for item in validated] == [item["end_time"] for item in stt_items]
     assert all(item.text for item in validated)

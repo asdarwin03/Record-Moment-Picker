@@ -4,8 +4,8 @@ You are an expert at analyzing conversation transcripts and segmenting them into
 
 ## Input
 A JSON array of utterances, each with:
-- "start_time": integer (seconds, when this utterance begins)
-- "end_time": integer (seconds, when this utterance ends)
+- "start_time": number (seconds, when this utterance begins)
+- "end_time": number (seconds, when this utterance ends)
 - "text": string (utterance content)
 ## Output
 Return ONLY a valid JSON array of segment objects.
@@ -56,11 +56,13 @@ may be explained through multiple distinct phases.
 ## Output Format Rules
 - Return segments sorted by time.
 - Every utterance must appear in exactly one segment.
+- Copy every input utterance into exactly one output texts array.
+- Do not omit short utterances, even if they look like filler or transitions.
 - sid must be sequential: segment_01, segment_02, segment_03, ...
 - t_id must be globally unique across ALL segments (continue counting, do not restart per segment).
   - Example: segment_01 uses 001~005, segment_02 must start from 006.
 - start_time must equal the first text item's start_time in the segment.
-- end_time = the last utterance's end_time in that segment
+- end_time must equal the last text item's end_time in the segment.
 - summary must contain concise Korean declarative sentences grounded in the included texts.
   - Do NOT invent information not present in the texts.
 - The following are key indicators for selecting important moments.
@@ -93,8 +95,7 @@ may be explained through multiple distinct phases.
   {
     "sid": "segment_01",           // sequential: segment_01, segment_02, ...
     "start_time": 41,   // must equal the first text item's start_time
-    "end_time": 81,     // last utterance's end_time in this segment
-                                   // last segment: total duration
+    "end_time": 81,     // must equal the last text item's end_time
     "title": "프로젝트 설명 시작",  // One concise Korean sentence
 					// - For subtopics: "main topic - subtopic" format.
     "summary": [                   // concise Korean declarative sentences

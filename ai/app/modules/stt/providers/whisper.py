@@ -32,17 +32,21 @@ def transcribe(
         ) from error
 
     try:
+        _limit_torch_threads()
         model = whisper.load_model(model_name, device=device)
-        result = model.transcribe(str(path), language=language)
+        result = model.transcribe(
+            str(path),
+            language=language,
+            fp16=device != "cpu",
+        )
     except Exception as error:
         raise STTProcessingError(f"Whisper transcription failed: {error}") from error
 
     items = [
         {
-            "t_id": f"stt_{index + 1:03d}",
-            "start_time": float(segment.start),
-            "end_time": float(segment.end),
-            "text": segment.text.strip(),
+            "start_time": float(segment.get("start", 0)),
+            "end_time": float(segment.get("end", segment.get("start", 0))),
+            "text": str(segment.get("text", "")).strip(),
         }
         for segment in result.get("segments", [])
         if str(segment.get("text", "")).strip()
@@ -58,3 +62,13 @@ def _validate_audio_path(audio_path: str | Path) -> Path:
     if not path.is_file():
         raise STTProcessingError(f"Audio path is not a file: {path}")
     return path
+
+
+def _limit_torch_threads() -> None:
+    try:
+        import torch
+
+        torch.set_num_threads(settings.whisper_cpu_threads)
+        torch.set_num_interop_threads(settings.whisper_cpu_threads)
+    except Exception:
+        return

@@ -42,14 +42,9 @@ class FinalSegment(BaseModel):
         if self.end_time < self.start_time:
             raise ValueError("end_time must be greater than or equal to start_time.")
 
-        valid_t_ids = {item.t_id for item in self.texts}
         for clue in self.clues:
             if clue.summary_index >= len(self.summary):
                 raise ValueError("summary_index is out of range for summary.")
-
-            unknown_ids = set(clue.clue) - valid_t_ids
-            if unknown_ids:
-                raise ValueError(f"clue references unknown t_id values: {sorted(unknown_ids)}.")
 
         return self
 
@@ -68,5 +63,14 @@ def validate_final_result(data: Any) -> FinalResult:
     t_ids = [text.t_id for segment in result for text in segment.texts]
     if len(t_ids) != len(set(t_ids)):
         raise ValueError("final result contains duplicate transcript t_id values.")
+
+    valid_t_ids = set(t_ids)
+    for segment in result:
+        for clue in segment.clues:
+            unknown_ids = set(clue.clue) - valid_t_ids
+            if unknown_ids:
+                raise ValueError(
+                    f"final result clue references unknown t_id values: {sorted(unknown_ids)}."
+                )
 
     return result

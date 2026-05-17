@@ -25,7 +25,8 @@ class TranscriptItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     t_id: TranscriptId = Field(..., description="Global transcript item ID.")
-    time: NonNegativeFloat = Field(..., description="Utterance start time in seconds.")
+    start_time: NonNegativeFloat = Field(..., description="Utterance start time in seconds.")
+    end_time: NonNegativeFloat = Field(..., description="Utterance end time in seconds.")
     text: NonEmptyString = Field(..., description="Transcript text.")
 
 

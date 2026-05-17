@@ -19,14 +19,14 @@ def refine_text(
     """
     Input:
     [
-      {"time": 41, "text": "안냥하세요..."},
-      {"time": 57, "text": "이 프로젝트는 생강보다..."}
+      {"start_time": 41, "end_time": 56, "text": "안냥하세요..."},
+      {"start_time": 57, "end_time": 81, "text": "이 프로젝트는 생강보다..."}
     ]
 
     Output:
     [
-      {"time": 41, "text": "안녕하세요..."},
-      {"time": 57, "text": "이 프로젝트는 생각보다..."}
+      {"start_time": 41, "end_time": 56, "text": "안녕하세요..."},
+      {"start_time": 57, "end_time": 81, "text": "이 프로젝트는 생각보다..."}
     ]
 
     If llm_client is None, this function uses a local fallback cleanup.

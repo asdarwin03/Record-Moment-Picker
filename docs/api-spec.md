@@ -2,6 +2,8 @@
 
 이 문서는 Record Moment Picker의 Backend API와 AI Service API를 정의합니다.
 
+Backend는 파일과 record metadata를 저장한 뒤 `202 Accepted`를 반환하고, AI 분석을 background job으로 실행합니다. Frontend는 상태 API를 polling해서 완료 여부를 확인합니다.
+
 ---
 
 ## 1. API 설계 원칙
@@ -9,16 +11,13 @@
 1. Frontend는 Backend API만 호출합니다.
 2. Backend는 AI Service API를 호출합니다.
 3. Frontend는 AI Service를 직접 호출하지 않습니다.
-4. AI Service는 사용자 인증과 DB 저장을 담당하지 않습니다.
-5. Backend는 Final JSON을 DB에 저장하고 Frontend에 제공합니다.
-6. 모든 응답은 가능한 한 일관된 JSON 구조를 사용합니다.
+4. AI Service는 사용자 인증과 저장소 관리를 담당하지 않습니다.
+5. Backend는 파일과 Final JSON을 저장하고 Frontend에 제공합니다.
+6. 로컬 프로토타입 저장소는 `backend/storage/data.json`입니다.
 
 ---
 
 ## 2. Backend 공통 응답 형식
-
-이 형식은 Frontend가 호출하는 Backend API의 기본 응답 형식입니다.  
-AI Service API는 Backend 내부 호출용이므로 `status`, `data`, `message` 형식을 사용합니다.
 
 성공 응답:
 
@@ -42,31 +41,23 @@ AI Service API는 Backend 내부 호출용이므로 `status`, `data`, `message` 
 
 ---
 
-# 3. Backend API
+## 3. Backend API
 
-Base URL 예시:
+Base URL:
 
 ```txt
 http://localhost:3000/api
 ```
 
+로컬 프로토타입은 mock user 기반으로 동작합니다. 인증 API는 설계상 포함되어 있지만 핵심 분석 흐름에는 사용하지 않습니다.
+
 ---
 
-## 3.1 Auth API
+## 3.1 Bootstrap
 
-## POST `/auth/register`
+### GET `/bootstrap`
 
-회원가입 API입니다.
-
-Request Body:
-
-```json
-{
-  "email": "user@example.com",
-  "password": "password1234",
-  "name": "홍길동"
-}
-```
+Frontend 초기 화면에 필요한 폴더와 녹음 목록을 조회합니다.
 
 Response:
 
@@ -74,9 +65,22 @@ Response:
 {
   "success": true,
   "data": {
-    "user_id": 1,
-    "email": "user@example.com",
-    "name": "홍길동"
+    "folders": [
+      {
+        "id": "all",
+        "name": "전체",
+        "count": 4
+      }
+    ],
+    "recordings": [
+      {
+        "id": "rec_001",
+        "name": "sample-kickoff.mp3",
+        "date": "2026-05-16",
+        "folderId": "uncategorized",
+        "status": "completed"
+      }
+    ]
   },
   "message": null
 }
@@ -84,83 +88,17 @@ Response:
 
 ---
 
-## POST `/auth/login`
+## 3.2 Record API
 
-로그인 API입니다.
+### POST `/records`
 
-Request Body:
-
-```json
-{
-  "email": "user@example.com",
-  "password": "password1234"
-}
-```
-
-Response:
-
-```json
-{
-  "success": true,
-  "data": {
-    "access_token": "jwt-token",
-    "user": {
-      "user_id": 1,
-      "email": "user@example.com",
-      "name": "홍길동"
-    }
-  },
-  "message": null
-}
-```
-
----
-
-## GET `/auth/me`
-
-현재 로그인한 사용자 정보를 조회합니다.
-
-Headers:
-
-```txt
-Authorization: Bearer {access_token}
-```
-
-Response:
-
-```json
-{
-  "success": true,
-  "data": {
-    "user_id": 1,
-    "email": "user@example.com",
-    "name": "홍길동"
-  },
-  "message": null
-}
-```
-
----
-
-# 3.2 Record API
-
-## POST `/records`
-
-녹음 파일을 업로드하고 분석을 요청합니다.
-
-초기 MVP에서는 이 API가 파일 업로드, AI 처리 요청, DB 저장까지 한 번에 수행할 수 있습니다.  
-처리 시간이 길어질 경우 비동기 방식으로 분리하는 것을 권장합니다.
-
-Headers:
-
-```txt
-Authorization: Bearer {access_token}
-Content-Type: multipart/form-data
-```
+녹음 파일을 업로드하고 분석 job을 생성합니다.
 
 Request:
 
 ```txt
+Content-Type: multipart/form-data
+
 file: audio file
 ```
 
@@ -170,49 +108,29 @@ Response:
 {
   "success": true,
   "data": {
-    "record_id": 1,
-    "status": "completed",
-    "result": [
-      {
-        "sid": "segment_01",
-        "start_time": 41,
-        "end_time": 81,
-        "title": "프로젝트 설명 시작",
-        "summary": [
-          "Record Moment Picker 발표가 시작됨"
-        ],
-        "texts": [
-          {
-            "t_id": "001",
-            "time": 41,
-            "text": "안녕하세요, RecordMomentPicker 발표를 시작하겠습니다."
-          }
-        ],
-        "important": [],
-        "clues": [
-          {
-            "summary_index": 0,
-            "clue": ["001"]
-          }
-        ]
-      }
-    ]
+    "record_id": "rec_20260517_001",
+    "status": "processing",
+    "recording": {
+      "id": "rec_20260517_001",
+      "name": "sample-kickoff.mp3",
+      "date": "2026-05-17",
+      "folderId": "uncategorized",
+      "status": "processing"
+    }
   },
-  "message": null
+  "message": "Record uploaded. Processing has started."
 }
 ```
 
+HTTP status는 `202 Accepted`입니다. 분석 결과는 이 응답에 포함되지 않습니다.
+
+한국어 파일명은 Backend에서 multipart filename을 복원한 뒤 저장합니다.
+
 ---
 
-## GET `/records`
+### GET `/records`
 
-현재 사용자의 녹음 분석 목록을 조회합니다.
-
-Headers:
-
-```txt
-Authorization: Bearer {access_token}
-```
+녹음 분석 목록을 조회합니다.
 
 Response:
 
@@ -221,11 +139,11 @@ Response:
   "success": true,
   "data": [
     {
-      "record_id": 1,
-      "original_filename": "meeting.m4a",
-      "status": "completed",
-      "created_at": "2026-05-13T10:00:00Z",
-      "completed_at": "2026-05-13T10:03:00Z"
+      "id": "rec_20260517_001",
+      "name": "sample-kickoff.mp3",
+      "date": "2026-05-17",
+      "folderId": "uncategorized",
+      "status": "completed"
     }
   ],
   "message": null
@@ -234,15 +152,9 @@ Response:
 
 ---
 
-## GET `/records/{record_id}`
+### GET `/records/{record_id}`
 
 특정 녹음 분석 결과를 조회합니다.
-
-Headers:
-
-```txt
-Authorization: Bearer {access_token}
-```
 
 Response:
 
@@ -250,14 +162,15 @@ Response:
 {
   "success": true,
   "data": {
-    "record_id": 1,
-    "original_filename": "meeting.m4a",
+    "id": "rec_20260517_001",
+    "name": "sample-kickoff.mp3",
     "status": "completed",
+    "audioUrl": "/uploads/1700000000000-sample-kickoff.mp3",
     "result": [
       {
         "sid": "segment_01",
-        "start_time": 41,
-        "end_time": 81,
+        "start_time": 41.2,
+        "end_time": 63.5,
         "title": "프로젝트 설명 시작",
         "summary": [
           "Record Moment Picker 발표가 시작됨"
@@ -265,7 +178,8 @@ Response:
         "texts": [
           {
             "t_id": "001",
-            "time": 41,
+            "start_time": 41.2,
+            "end_time": 46.8,
             "text": "안녕하세요, RecordMomentPicker 발표를 시작하겠습니다."
           }
         ],
@@ -285,15 +199,9 @@ Response:
 
 ---
 
-## DELETE `/records/{record_id}`
+### GET `/records/{record_id}/status`
 
-특정 녹음 기록을 삭제합니다.
-
-Headers:
-
-```txt
-Authorization: Bearer {access_token}
-```
+분석 상태를 조회합니다. Frontend는 업로드 후 이 API를 주기적으로 호출합니다.
 
 Response:
 
@@ -301,40 +209,10 @@ Response:
 {
   "success": true,
   "data": {
-    "record_id": 1
-  },
-  "message": "Record deleted"
-}
-```
-
----
-
-# 3.3 Processing Status API
-
-비동기 처리 방식으로 전환할 경우 사용하는 API입니다.
-
-## GET `/records/{record_id}/status`
-
-분석 상태를 조회합니다.
-
-Headers:
-
-```txt
-Authorization: Bearer {access_token}
-```
-
-Response:
-
-```json
-{
-  "success": true,
-  "data": {
-    "record_id": 1,
+    "record_id": "rec_20260517_001",
     "status": "processing",
-    "progress": {
-      "stage": "segmenting",
-      "percentage": 60
-    }
+    "stage": "ai_processing",
+    "error": null
   },
   "message": null
 }
@@ -349,23 +227,43 @@ completed
 failed
 ```
 
-`stage` 값:
+---
 
-```txt
-uploaded
-stt
-refine_text
-segmenting
-reasoning
-completed
-failed
+### DELETE `/records/{record_id}`
+
+특정 녹음 기록을 숨김/삭제 처리합니다.
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "record_id": "rec_20260517_001"
+  },
+  "message": "Record deleted"
+}
 ```
 
 ---
 
-# 4. AI Service API
+## 3.3 Folder API
 
-Base URL 예시:
+폴더 정보도 파일 기반 저장소에 함께 저장됩니다.
+
+```txt
+GET /folders
+POST /folders
+PATCH /folders/{folder_id}
+DELETE /folders/{folder_id}
+PATCH /records/{record_id}/folder
+```
+
+---
+
+## 4. AI Service API
+
+Base URL:
 
 ```txt
 http://localhost:8000
@@ -375,9 +273,11 @@ AI Service API는 Backend에서만 호출합니다.
 
 ---
 
-## POST `/process-audio`
+### POST `/process-audio`
 
 오디오 파일을 받아 전체 AI 파이프라인을 실행합니다.
+
+`AI_PIPELINE_MODE=demo`이면 샘플 Final JSON을 반환합니다. `AI_PIPELINE_MODE=full`이면 STT, 정제, segmenting, reasoning을 모두 실행합니다.
 
 Request:
 
@@ -395,8 +295,8 @@ Response:
   "data": [
     {
       "sid": "segment_01",
-      "start_time": 41,
-      "end_time": 81,
+      "start_time": 41.2,
+      "end_time": 63.5,
       "title": "프로젝트 설명 시작",
       "summary": [
         "Record Moment Picker 발표가 시작됨"
@@ -404,7 +304,8 @@ Response:
       "texts": [
         {
           "t_id": "001",
-          "time": 41,
+          "start_time": 41.2,
+          "end_time": 46.8,
           "text": "안녕하세요, RecordMomentPicker 발표를 시작하겠습니다."
         }
       ],
@@ -423,22 +324,16 @@ Response:
 
 ---
 
-## POST `/process-text`
+### POST `/process-stt`
 
-개발 및 테스트용 API입니다.  
-STT를 건너뛰고 timestamp가 포함된 transcript를 입력받아 Refine Text부터 실행합니다.
+STT만 단독으로 테스트하는 개발용 API입니다.
 
-Request Body:
+Request:
 
-```json
-{
-  "items": [
-    {
-      "time": 41,
-      "text": "안냥하세요, RecordMomentPicker 발표를 시작하겠습니다."
-    }
-  ]
-}
+```txt
+Content-Type: multipart/form-data
+
+file: audio file
 ```
 
 Response:
@@ -448,27 +343,9 @@ Response:
   "status": "success",
   "data": [
     {
-      "sid": "segment_01",
-      "start_time": 41,
-      "end_time": 81,
-      "title": "프로젝트 설명 시작",
-      "summary": [
-        "Record Moment Picker 발표가 시작됨"
-      ],
-      "texts": [
-        {
-          "t_id": "001",
-          "time": 41,
-          "text": "안녕하세요, RecordMomentPicker 발표를 시작하겠습니다."
-        }
-      ],
-      "important": [],
-      "clues": [
-        {
-          "summary_index": 0,
-          "clue": ["001"]
-        }
-      ]
+      "start_time": 0.0,
+      "end_time": 4.2,
+      "text": "첫 번째 발화입니다."
     }
   ],
   "message": null
@@ -477,7 +354,27 @@ Response:
 
 ---
 
-## GET `/health`
+### POST `/process-text`
+
+STT를 건너뛰고 `{ start_time, end_time, text }` transcript를 입력받아 Refine Text부터 실행하는 개발용 API입니다.
+
+Request Body:
+
+```json
+{
+  "items": [
+    {
+      "start_time": 41.2,
+      "end_time": 46.8,
+      "text": "안냥하세요, RecordMomentPicker 발표를 시작하겠습니다."
+    }
+  ]
+}
+```
+
+---
+
+### GET `/health`
 
 AI Service 상태 확인 API입니다.
 
@@ -491,55 +388,19 @@ Response:
 
 ---
 
-# 5. 에러 응답
+## 5. 에러 응답
 
-## 5.1 Backend 에러 예시
-
-인증 실패:
+Backend 에러:
 
 ```json
 {
   "success": false,
   "data": null,
-  "message": "Unauthorized"
+  "message": "AI service request failed"
 }
 ```
 
-파일 누락:
-
-```json
-{
-  "success": false,
-  "data": null,
-  "message": "Audio file is required"
-}
-```
-
-분석 결과 없음:
-
-```json
-{
-  "success": false,
-  "data": null,
-  "message": "Record not found"
-}
-```
-
----
-
-## 5.2 AI Service 에러 예시
-
-STT 실패:
-
-```json
-{
-  "status": "failed",
-  "data": null,
-  "message": "STT processing failed"
-}
-```
-
-schema validation 실패:
+AI Service 에러:
 
 ```json
 {
@@ -551,36 +412,14 @@ schema validation 실패:
 
 ---
 
-# 6. MVP 단계 API 우선순위
-
-MVP에서 먼저 구현할 API는 다음과 같습니다.
+## 6. Frontend 사용 기준
 
 ```txt
-Backend
-1. POST /api/records
-2. GET /api/records
-3. GET /api/records/{record_id}
-
-AI Service
-1. POST /process-audio
-2. POST /process-text
-3. GET /health
-```
-
-로그인 기능은 프로젝트 요구사항에 포함되지만, AI 및 GUI 프로토타입을 먼저 확인하려면 mock user 방식으로 시작할 수 있습니다.
-
----
-
-# 7. Frontend 사용 기준
-
-Frontend는 다음 순서로 API를 사용합니다.
-
-```txt
-1. 사용자가 로그인한다.
+1. Frontend가 GET /api/bootstrap으로 초기 목록을 불러온다.
 2. 사용자가 파일을 업로드한다.
-3. POST /api/records 호출
-4. record_id와 result를 받는다.
-5. result를 기반으로 화면을 표시한다.
-6. 이후 GET /api/records로 과거 분석 목록을 불러온다.
-7. GET /api/records/{record_id}로 특정 결과를 다시 표시한다.
+3. Frontend가 POST /api/records를 호출한다.
+4. Backend가 record_id와 processing 상태를 즉시 반환한다.
+5. Frontend가 GET /api/records/{record_id}/status를 polling한다.
+6. completed가 되면 GET /api/records/{record_id}로 Final JSON을 가져온다.
+7. Final JSON을 기반으로 화면을 표시한다.
 ```

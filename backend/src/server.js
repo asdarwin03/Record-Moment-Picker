@@ -12,6 +12,7 @@ import recordRoutes from "./routes/record.routes.js";
 import uploadRoutes from "./routes/upload.routes.js";
 import { listFolders } from "./services/folderService.js";
 import { listRecords } from "./services/recordService.js";
+import { resumePendingRecordProcessing } from "./services/recordProcessingService.js";
 import { getUploadDir } from "./services/storageService.js";
 import { authenticate } from "./routes/auth.routes.js";
 
@@ -75,4 +76,8 @@ app.use((error, _req, res, _next) => {
 
 app.listen(port, () => {
   console.log(`Backend server listening on http://localhost:${port}`);
+  const resumedCount = resumePendingRecordProcessing();
+  if (resumedCount > 0) {
+    console.log(`Resumed ${resumedCount} pending record processing job(s).`);
+  }
 });

@@ -7,33 +7,45 @@ export async function requestAudioProcessing(audioPath) {
   const form = new FormData();
   form.append("file", fs.createReadStream(audioPath));
 
-  const response = await axios.post(`${aiServerUrl}/process-audio`, form, {
-    headers: form.getHeaders(),
-    maxBodyLength: Infinity,
-    timeout: Number(process.env.AI_REQUEST_TIMEOUT_MS || 300000),
-  });
+  try {
+    const response = await axios.post(`${aiServerUrl}/process-audio`, form, {
+      headers: form.getHeaders(),
+      maxBodyLength: Infinity,
+      timeout: Number(process.env.AI_REQUEST_TIMEOUT_MS || 300000),
+    });
 
-  return unwrapAIResponse(response.data);
+    return unwrapAIResponse(response.data);
+  } catch (error) {
+    throw normalizeAIError(error);
+  }
 }
 
 export async function requestTextProcessing(items) {
   const aiServerUrl = process.env.AI_SERVER_URL || "http://localhost:8000";
-  const response = await axios.post(
-    `${aiServerUrl}/process-text`,
-    { items },
-    { timeout: Number(process.env.AI_REQUEST_TIMEOUT_MS || 300000) }
-  );
+  try {
+    const response = await axios.post(
+      `${aiServerUrl}/process-text`,
+      { items },
+      { timeout: Number(process.env.AI_REQUEST_TIMEOUT_MS || 300000) }
+    );
 
-  return unwrapAIResponse(response.data);
+    return unwrapAIResponse(response.data);
+  } catch (error) {
+    throw normalizeAIError(error);
+  }
 }
 
 export async function checkAIHealth() {
   const aiServerUrl = process.env.AI_SERVER_URL || "http://localhost:8000";
-  const response = await axios.get(`${aiServerUrl}/health`, {
-    timeout: Number(process.env.AI_HEALTH_TIMEOUT_MS || 5000),
-  });
+  try {
+    const response = await axios.get(`${aiServerUrl}/health`, {
+      timeout: Number(process.env.AI_HEALTH_TIMEOUT_MS || 5000),
+    });
 
-  return response.data;
+    return response.data;
+  } catch (error) {
+    throw normalizeAIError(error);
+  }
 }
 
 function unwrapAIResponse(payload) {
@@ -50,4 +62,16 @@ function unwrapAIResponse(payload) {
   }
 
   return payload.data;
+}
+
+function normalizeAIError(error) {
+  const message =
+    error.response?.data?.message ||
+    error.response?.data?.detail ||
+    error.message ||
+    "AI service request failed";
+
+  const normalizedError = new Error(message);
+  normalizedError.statusCode = 502;
+  return normalizedError;
 }

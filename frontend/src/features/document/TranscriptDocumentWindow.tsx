@@ -58,11 +58,11 @@ export function TranscriptDocumentWindow({
             key={text.t_id}
             type="button"
             onClick={() => {
-              onSeek(text.time)
+              onSeek(text.start_time)
               onHighlight(text.t_id)
             }}
           >
-            <strong>{formatTime(text.time)}</strong>
+            <strong>{formatTime(text.start_time)}</strong>
             <span>
               <em>{text.segmentTitle}</em>
               {text.text}

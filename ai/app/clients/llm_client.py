@@ -57,6 +57,7 @@ class LLMClient:
         max_output_tokens: int = 4096,
     ) -> Any:
         prompt = self._build_json_prompt(system_prompt, user_payload)
+        response_schema = self._prepare_response_schema(schema)
         payload: dict[str, Any] = {
             "model": self.config.model,
             "input": prompt,
@@ -64,12 +65,12 @@ class LLMClient:
             "store": False,
         }
 
-        if schema is not None:
+        if response_schema is not None:
             payload["text"] = {
                 "format": {
                     "type": "json_schema",
                     "name": schema_name,
-                    "schema": self._strip_schema_metadata(schema),
+                    "schema": response_schema,
                     "strict": False,
                 }
             }
@@ -77,7 +78,8 @@ class LLMClient:
             payload["text"] = {"format": {"type": "json_object"}}
 
         text = self._create_response(payload)
-        return self._parse_json(text)
+        result = self._parse_json(text)
+        return self._unwrap_array_schema_result(result, schema)
 
     def generate_text(
         self,
@@ -126,6 +128,19 @@ class LLMClient:
     def _create_response(self, payload: dict[str, Any]) -> str:
         if not self.config.api_key:
             raise LLMClientError("OPENAI_API_KEY is not set.")
+        if self.config.api_key in {
+            "your_openai_api_key_here",
+            "replace_with_your_openai_api_key",
+        }:
+            raise LLMClientError(
+                "OPENAI_API_KEY is still a placeholder. "
+                "Set it to your real OpenAI API key in the root .env file."
+            )
+        if not self.config.api_key.isascii():
+            raise LLMClientError(
+                "OPENAI_API_KEY must be a real ASCII API key. "
+                "Replace the placeholder value with your OpenAI API key."
+            )
 
         url = f"{self.config.base_url.rstrip('/')}/responses"
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -212,6 +227,32 @@ class LLMClient:
             for key, value in schema.items()
             if key not in {"$schema", "$id", "title", "description"}
         }
+
+    def _prepare_response_schema(self, schema: dict[str, Any] | None) -> dict[str, Any] | None:
+        if schema is None:
+            return None
+
+        stripped_schema = self._strip_schema_metadata(schema)
+        if stripped_schema.get("type") != "array":
+            return stripped_schema
+
+        return {
+            "type": "object",
+            "required": ["data"],
+            "additionalProperties": False,
+            "properties": {
+                "data": stripped_schema,
+            },
+        }
+
+    def _unwrap_array_schema_result(self, result: Any, schema: dict[str, Any] | None) -> Any:
+        if schema is None or self._strip_schema_metadata(schema).get("type") != "array":
+            return result
+
+        if isinstance(result, dict) and isinstance(result.get("data"), list):
+            return result["data"]
+
+        return result
 
 
 def load_shared_schema(filename: str) -> dict[str, Any]:

@@ -2,19 +2,19 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
+import { getDataState, saveDataState } from "./dataStore.js";
 import { getPublicUploadUrl, removeStoredFile } from "./storageService.js";
 
-const records = new Map();
-let nextRecordId = 1;
 const mockUserId = 1;
 
-seedDemoRecords();
+seedDemoRecordsIfNeeded();
 
 export function createRecord({ userId, originalFilename, storedFilename, filePath }) {
+  const state = getDataState();
   const now = new Date().toISOString();
   const record = {
-    record_id: nextRecordId,
-    id: String(nextRecordId),
+    record_id: state.nextRecordId,
+    id: String(state.nextRecordId),
     user_id: userId,
     name: originalFilename,
     original_filename: originalFilename,
@@ -28,8 +28,9 @@ export function createRecord({ userId, originalFilename, storedFilename, filePat
     completed_at: null,
   };
 
-  nextRecordId += 1;
-  records.set(record.record_id, record);
+  state.nextRecordId += 1;
+  state.records.push(record);
+  saveDataState();
   return toRecordDetail(record);
 }
 
@@ -37,6 +38,7 @@ export function markRecordProcessing(recordId) {
   const record = requireRecord(recordId);
   record.status = "processing";
   record.updated_at = new Date().toISOString();
+  saveDataState();
   return toRecordDetail(record);
 }
 
@@ -48,6 +50,7 @@ export function completeRecord(recordId, result) {
   record.error_message = null;
   record.updated_at = now;
   record.completed_at = now;
+  saveDataState();
   return toRecordDetail(record);
 }
 
@@ -56,11 +59,12 @@ export function failRecord(recordId, message) {
   record.status = "failed";
   record.error_message = message;
   record.updated_at = new Date().toISOString();
+  saveDataState();
   return toRecordDetail(record);
 }
 
 export function listRecords(userId) {
-  return Array.from(records.values())
+  return getDataState().records
     .filter((record) => record.user_id === userId)
     .sort((a, b) => b.record_id - a.record_id)
     .map(toFrontendRecording);
@@ -82,7 +86,9 @@ export function deleteRecord(recordId, userId) {
   }
 
   removeStoredFile(record.file_path);
-  records.delete(record.record_id);
+  const state = getDataState();
+  state.records = state.records.filter((item) => item.record_id !== record.record_id);
+  saveDataState();
   return true;
 }
 
@@ -112,29 +118,40 @@ export function updateRecord(recordId, userId, updates) {
   }
 
   record.updated_at = new Date().toISOString();
+  saveDataState();
   return toRecordDetail(record);
 }
 
 export function clearRecordFolder(userId, folderId) {
-  Array.from(records.values()).forEach((record) => {
+  let didUpdate = false;
+  getDataState().records.forEach((record) => {
     if (record.user_id === userId && record.folder_id === folderId) {
       record.folder_id = undefined;
       record.updated_at = new Date().toISOString();
+      didUpdate = true;
     }
   });
+
+  if (didUpdate) {
+    saveDataState();
+  }
 }
 
 export function hideRecords(recordIds, userId) {
   const ids = new Set(recordIds.map((id) => String(id)));
   const updated = [];
 
-  Array.from(records.values()).forEach((record) => {
+  getDataState().records.forEach((record) => {
     if (record.user_id === userId && ids.has(String(record.id))) {
       record.is_hidden = true;
       record.updated_at = new Date().toISOString();
       updated.push(toFrontendRecording(record));
     }
   });
+
+  if (updated.length > 0) {
+    saveDataState();
+  }
 
   return updated;
 }
@@ -154,6 +171,13 @@ export function getRecordStatus(recordId, userId) {
   };
 }
 
+export function listProcessableRecords() {
+  return getDataState().records
+    .filter((record) => ["uploaded", "processing"].includes(record.status))
+    .filter((record) => record.file_path)
+    .map((record) => ({ ...record }));
+}
+
 function requireRecord(recordId) {
   const record = findRecord(recordId);
   if (!record) {
@@ -167,11 +191,16 @@ function requireRecord(recordId) {
 
 function findRecord(recordId) {
   const numericId = Number(recordId);
-  if (Number.isInteger(numericId) && records.has(numericId)) {
-    return records.get(numericId);
+  const records = getDataState().records;
+
+  if (Number.isInteger(numericId)) {
+    const numericRecord = records.find((record) => record.record_id === numericId);
+    if (numericRecord) {
+      return numericRecord;
+    }
   }
 
-  return Array.from(records.values()).find((record) => record.id === String(recordId));
+  return records.find((record) => record.id === String(recordId));
 }
 
 function getProgress(status) {
@@ -242,12 +271,17 @@ function toDateOnly(value) {
   return new Date(value).toISOString().slice(0, 10);
 }
 
-function seedDemoRecords() {
+function seedDemoRecordsIfNeeded() {
+  const state = getDataState();
+  if (state.records.length > 0) {
+    return;
+  }
+
   const demoSegments = loadDemoSegments();
   const now = new Date().toISOString();
 
   const waitingRecord = {
-    record_id: nextRecordId,
+    record_id: state.nextRecordId,
     id: "os",
     user_id: mockUserId,
     name: "운영체제 7강.m4a",
@@ -261,10 +295,10 @@ function seedDemoRecords() {
     updated_at: now,
     completed_at: null,
   };
-  nextRecordId += 1;
+  state.nextRecordId += 1;
 
   const doneRecord = {
-    record_id: nextRecordId,
+    record_id: state.nextRecordId,
     id: "club",
     user_id: mockUserId,
     name: "동아리 회의.m4a",
@@ -278,10 +312,10 @@ function seedDemoRecords() {
     updated_at: now,
     completed_at: "2026-03-29T00:00:00.000Z",
   };
-  nextRecordId += 1;
+  state.nextRecordId += 1;
 
-  records.set(waitingRecord.record_id, waitingRecord);
-  records.set(doneRecord.record_id, doneRecord);
+  state.records.push(waitingRecord, doneRecord);
+  saveDataState();
 }
 
 function loadDemoSegments() {

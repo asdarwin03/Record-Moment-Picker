@@ -19,7 +19,7 @@ export function useAudioController({
   const [currentTime, setCurrentTime] = useState(segments[0]?.start_time ?? 0)
   const [audioDuration, setAudioDuration] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
-  const duration = audioDuration || analysisDuration
+  const duration = Math.max(audioDuration, analysisDuration)
 
   const seekToTime = useCallback(
     function seekToTime(nextTime: number) {
@@ -82,6 +82,9 @@ export function useAudioController({
     const nextSegment = findSegmentByTime(segments, nextTime)
 
     setCurrentTime(nextTime)
+    setAudioDuration((currentDuration) =>
+      Math.max(currentDuration, analysisDuration, nextTime),
+    )
 
     if (nextSegment) {
       onSegmentChange(nextSegment.sid)

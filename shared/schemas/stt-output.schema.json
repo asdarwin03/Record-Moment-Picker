@@ -2,17 +2,22 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "stt-output.schema.json",
   "title": "STT Output",
-  "description": "STT module output: raw transcript text with timestamp.",
+  "description": "STT module output: raw transcript text with start and end timestamps.",
   "type": "array",
   "items": {
     "type": "object",
-    "required": ["time", "text"],
+    "required": ["start_time", "end_time", "text"],
     "additionalProperties": false,
     "properties": {
-      "time": {
+      "start_time": {
         "type": "number",
         "minimum": 0,
         "description": "Start time of the utterance in seconds."
+      },
+      "end_time": {
+        "type": "number",
+        "minimum": 0,
+        "description": "End time of the utterance in seconds."
       },
       "text": {
         "type": "string",

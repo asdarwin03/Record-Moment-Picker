@@ -35,7 +35,13 @@ def transcribe(
         ) from error
 
     try:
-        model = WhisperModel(model_name, device=device, compute_type=compute_type)
+        model = WhisperModel(
+            model_name,
+            device=device,
+            compute_type=compute_type,
+            cpu_threads=settings.whisper_cpu_threads,
+            num_workers=1,
+        )
         segments, _info = model.transcribe(
             str(path),
             language=language,
@@ -43,7 +49,6 @@ def transcribe(
         )
         items = [
             {
-                "t_id": f"stt_{index + 1:03d}",
                 "start_time": float(segment.start),
                 "end_time": float(segment.end),
                 "text": segment.text.strip(),

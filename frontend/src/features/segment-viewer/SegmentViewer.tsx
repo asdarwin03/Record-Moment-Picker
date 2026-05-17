@@ -61,9 +61,9 @@ export function SegmentViewer({
                 }
                 key={text.t_id}
                 type="button"
-                onClick={() => onSeek(text.time)}
+                onClick={() => onSeek(text.start_time)}
               >
-                <span>{formatTime(text.time)}</span>
+                <span>{formatTime(text.start_time)}</span>
                 <p>{text.text}</p>
               </button>
             ))}

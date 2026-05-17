@@ -18,7 +18,8 @@ def test_stt_sample_contract():
 
     result = validate_stt_output(data)
     assert result
-    assert all(item.time >= 0 for item in result)
+    assert all(item.start_time >= 0 for item in result)
+    assert all(item.end_time >= item.start_time for item in result)
     assert all(item.text for item in result)
 
 

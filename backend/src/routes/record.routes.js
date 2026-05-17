@@ -1,20 +1,17 @@
 import express from "express";
 import multer from "multer";
-import path from "path";
 
-import { requestAudioProcessing } from "../services/aiClient.js";
+import { createStoredFilename, decodeOriginalFilename } from "../services/filenameService.js";
 import {
-  completeRecord,
   createRecord,
   deleteRecord,
-  failRecord,
   getRecord,
   getRecordStatus,
   hideRecords,
   listRecords,
-  markRecordProcessing,
   updateRecord,
 } from "../services/recordService.js";
+import { queueRecordProcessing } from "../services/recordProcessingService.js";
 import { getUploadDir } from "../services/storageService.js";
 import { authenticate } from "./auth.routes.js";
 
@@ -25,9 +22,7 @@ const storage = multer.diskStorage({
     cb(null, getUploadDir());
   },
   filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const baseName = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9_-]/g, "_");
-    cb(null, `${Date.now()}-${baseName || "audio"}${ext}`);
+    cb(null, createStoredFilename(file.originalname, "audio"));
   },
 });
 
@@ -64,7 +59,7 @@ router.patch("/bulk/hide", authenticate, (req, res) => {
   });
 });
 
-router.post("/", authenticate, upload.single("file"), async (req, res, next) => {
+router.post("/", authenticate, upload.single("file"), (req, res) => {
   if (!req.file) {
     return res.status(400).json({
       success: false,
@@ -75,33 +70,29 @@ router.post("/", authenticate, upload.single("file"), async (req, res, next) => 
 
   const record = createRecord({
     userId: req.user.user_id,
-    originalFilename: req.file.originalname,
+    originalFilename: decodeOriginalFilename(req.file.originalname),
     storedFilename: req.file.filename,
     filePath: req.file.path,
   });
 
-  try {
-    markRecordProcessing(record.record_id);
-    const result = await requestAudioProcessing(req.file.path);
-    const completedRecord = completeRecord(record.record_id, result);
+  queueRecordProcessing(record.record_id, req.file.path);
 
-    return res.status(201).json({
-      success: true,
-      data: {
-        record_id: completedRecord.record_id,
-        id: completedRecord.id,
-        status: completedRecord.status,
-        frontend_status: completedRecord.frontend_status,
-        result: completedRecord.result,
-        segments: completedRecord.segments,
-        recording: completedRecord.recording,
+  return res.status(202).json({
+    success: true,
+    data: {
+      record_id: record.record_id,
+      id: record.id,
+      status: "processing",
+      frontend_status: "waiting",
+      result: null,
+      segments: [],
+      recording: {
+        ...record.recording,
+        status: "waiting",
       },
-      message: null,
-    });
-  } catch (error) {
-    failRecord(record.record_id, error.message);
-    return next(error);
-  }
+    },
+    message: "Record uploaded and queued for processing",
+  });
 });
 
 router.get("/:recordId/status", authenticate, (req, res) => {

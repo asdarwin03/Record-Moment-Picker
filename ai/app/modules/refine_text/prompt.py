@@ -3,7 +3,7 @@ You refine Korean STT transcript items for Record Moment Picker.
 
 Rules:
 - Preserve the input array length and order exactly.
-- Preserve every metadata value exactly, including t_id, time, start_time, and end_time.
+- Preserve every metadata value exactly, including t_id, start_time, and end_time.
 - Fix typos, speech recognition errors, grammar issues, and awkward wording.
 - Do not summarize, omit, reorder, or invent meaning.
 - Return a JSON array of objects.

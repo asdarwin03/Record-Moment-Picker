@@ -1,7 +1,7 @@
 import express from "express";
 import multer from "multer";
-import path from "path";
 
+import { createStoredFilename, decodeOriginalFilename } from "../services/filenameService.js";
 import { getUploadDir } from "../services/storageService.js";
 import { getPublicUploadUrl } from "../services/storageService.js";
 import { authenticate } from "./auth.routes.js";
@@ -13,9 +13,7 @@ const storage = multer.diskStorage({
     cb(null, getUploadDir());
   },
   filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const baseName = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9_-]/g, "_");
-    cb(null, `${Date.now()}-${baseName || "upload"}${ext}`);
+    cb(null, createStoredFilename(file.originalname, "upload"));
   },
 });
 
@@ -33,7 +31,7 @@ router.post("/", authenticate, upload.single("file"), (req, res) => {
   return res.status(201).json({
     success: true,
     data: {
-      original_filename: req.file.originalname,
+      original_filename: decodeOriginalFilename(req.file.originalname),
       stored_filename: req.file.filename,
       size: req.file.size,
       path: req.file.path,

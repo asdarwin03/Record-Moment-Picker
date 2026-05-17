@@ -10,6 +10,17 @@ import { SummaryWorkspace } from './features/summary/SummaryWorkspace'
 import { TimestampPanel } from './features/timeline/TimestampPanel'
 import { useAudioController } from './hooks/useAudioController'
 import {
+  createFolder as createFolderRequest,
+  deleteFolder as deleteFolderRequest,
+  fetchBootstrap,
+  fetchRecording,
+  fetchRecordingStatus,
+  hideRecordings,
+  renameFolder as renameFolderRequest,
+  updateRecordingFolder,
+  uploadRecording,
+} from './services/api'
+import {
   createDragStartHandler,
   createResizeStartHandler,
 } from './hooks/useDragResize'
@@ -41,6 +52,12 @@ const emptyRecording: Recording = {
   segments: [],
 }
 
+function delay(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms)
+  })
+}
+
 type EvidenceWindowState = {
   id: string
   isCollapsed: boolean
@@ -48,12 +65,15 @@ type EvidenceWindowState = {
   window: FloatingWindowState
 }
 
+const processingStatuses = new Set(['uploaded', 'processing'])
+
 function App() {
   const trackFillRef = useRef<HTMLDivElement | null>(null)
-  const objectUrlsRef = useRef<string[]>([])
 
   const [recordings, setRecordings] = useState(initialRecordings)
   const [selectedRecordingId, setSelectedRecordingId] = useState('club')
+  const [isUploading, setIsUploading] = useState(false)
+  const [apiError, setApiError] = useState<string | null>(null)
   const [draftRecordingSearchQuery, setDraftRecordingSearchQuery] = useState('')
   const [appliedRecordingSearchQuery, setAppliedRecordingSearchQuery] =
     useState('')
@@ -179,10 +199,34 @@ function App() {
   })
 
   useEffect(() => {
+    let isMounted = true
+
+    fetchBootstrap()
+      .then((payload) => {
+        if (!isMounted) {
+          return
+        }
+
+        setRecordings(payload.recordings)
+        setFolders(payload.folders)
+
+        const preferredRecording =
+          payload.recordings.find((recording) => recording.id === 'club') ??
+          payload.recordings[0]
+
+        if (preferredRecording) {
+          setSelectedRecordingId(preferredRecording.id)
+          setSelectedSid(preferredRecording.segments[0]?.sid ?? '')
+        }
+      })
+      .catch((error: Error) => {
+        if (isMounted) {
+          setApiError(`백엔드 연결 실패: ${error.message}`)
+        }
+      })
+
     return () => {
-      // Object URLs are intentionally collected in a ref for unmount cleanup.
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+      isMounted = false
     }
   }, [])
 
@@ -213,24 +257,34 @@ function App() {
     )
   }
 
-  function removeCheckedRecordings() {
+  async function removeCheckedRecordings() {
     if (checkedRecordingIds.length === 0) {
+      return
+    }
+
+    const idsToHide = checkedRecordingIds
+
+    try {
+      await hideRecordings(idsToHide)
+      setApiError(null)
+    } catch (error) {
+      setApiError(`녹음 제거 실패: ${(error as Error).message}`)
       return
     }
 
     setRecordings((items) =>
       items.map((recording) =>
-        checkedRecordingIds.includes(recording.id)
+        idsToHide.includes(recording.id)
           ? { ...recording, isHidden: true }
           : recording,
       ),
     )
 
     const nextRecording = visibleRecordings.find(
-      (recording) => !checkedRecordingIds.includes(recording.id),
+      (recording) => !idsToHide.includes(recording.id),
     )
 
-    if (nextRecording && checkedRecordingIds.includes(selectedRecordingId)) {
+    if (nextRecording && idsToHide.includes(selectedRecordingId)) {
       selectRecording(nextRecording)
       setCheckedRecordingIds([])
       return
@@ -249,19 +303,29 @@ function App() {
     setCheckedRecordingIds([])
   }
 
-  function addFolder() {
+  async function addFolder() {
     const folderNumber = folders.length + 1
-    const folder: RecordingFolder = {
-      id: `folder-${Date.now()}`,
-      name: `새 폴더 ${folderNumber}`,
-    }
 
-    setFolders((current) => [...current, folder])
-    setSelectedFolderId(folder.id)
+    try {
+      const folder = await createFolderRequest(`새 폴더 ${folderNumber}`)
+      setFolders((current) => [...current, folder])
+      setSelectedFolderId(folder.id)
+      setApiError(null)
+    } catch (error) {
+      setApiError(`폴더 추가 실패: ${(error as Error).message}`)
+    }
   }
 
-  function deleteSelectedFolder() {
+  async function deleteSelectedFolder() {
     if (!selectedFolderId) {
+      return
+    }
+
+    try {
+      await deleteFolderRequest(selectedFolderId)
+      setApiError(null)
+    } catch (error) {
+      setApiError(`폴더 삭제 실패: ${(error as Error).message}`)
       return
     }
 
@@ -278,28 +342,115 @@ function App() {
     setSelectedFolderId(undefined)
   }
 
-  function moveRecordingToFolder(recordingId: string, folderId?: string) {
+  async function moveRecordingToFolder(recordingId: string, folderId?: string) {
+    const previousRecordings = recordings
+
     setRecordings((items) =>
       items.map((recording) =>
         recording.id === recordingId
           ? { ...recording, folderId }
-          : recording,
+        : recording,
       ),
     )
+
+    try {
+      const updatedRecording = await updateRecordingFolder(recordingId, folderId)
+      setRecordings((items) =>
+        items.map((recording) =>
+          recording.id === recordingId ? updatedRecording : recording,
+        ),
+      )
+      setApiError(null)
+    } catch (error) {
+      setRecordings(previousRecordings)
+      setApiError(`폴더 이동 실패: ${(error as Error).message}`)
+    }
   }
 
-  function renameFolder(folderId: string, name: string) {
+  async function renameFolder(folderId: string, name: string) {
     const trimmedName = name.trim()
 
     if (!trimmedName) {
       return
     }
 
-    setFolders((current) =>
-      current.map((folder) =>
-        folder.id === folderId ? { ...folder, name: trimmedName } : folder,
-      ),
-    )
+    try {
+      const renamedFolder = await renameFolderRequest(folderId, trimmedName)
+      setFolders((current) =>
+        current.map((folder) =>
+          folder.id === folderId ? renamedFolder : folder,
+        ),
+      )
+      setApiError(null)
+    } catch (error) {
+      setApiError(`폴더 이름 변경 실패: ${(error as Error).message}`)
+    }
+  }
+
+  async function addRecordingFile(file: File) {
+    const temporaryRecording: Recording = {
+      id: `uploading-${Date.now()}`,
+      name: file.name,
+      date: new Date().toISOString().slice(0, 10),
+      status: 'waiting',
+      segments: [],
+    }
+
+    setIsUploading(true)
+    setApiError(null)
+    setRecordings((items) => [temporaryRecording, ...items])
+    selectRecording(temporaryRecording)
+
+    try {
+      const uploadedRecording = await uploadRecording(file)
+      setRecordings((items) =>
+        items.map((recording) =>
+          recording.id === temporaryRecording.id ? uploadedRecording : recording,
+        ),
+      )
+      selectRecording(uploadedRecording)
+      void pollRecordingUntilDone(uploadedRecording.id)
+    } catch (error) {
+      setRecordings((items) =>
+        items.filter((recording) => recording.id !== temporaryRecording.id),
+      )
+      setApiError(`녹음 분석 실패: ${(error as Error).message}`)
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  async function pollRecordingUntilDone(recordingId: string) {
+    const maxAttempts = 360
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      await delay(5000)
+
+      try {
+        const status = await fetchRecordingStatus(recordingId)
+
+        if (status.status === 'failed') {
+          setApiError('녹음 분석 실패: AI 처리 중 오류가 발생했습니다.')
+          return
+        }
+
+        if (!processingStatuses.has(status.status)) {
+          const completedRecording = await fetchRecording(recordingId)
+          setRecordings((items) =>
+            items.map((recording) =>
+              recording.id === recordingId ? completedRecording : recording,
+            ),
+          )
+
+          setApiError(null)
+          return
+        }
+      } catch (error) {
+        setApiError(`분석 상태 확인 실패: ${(error as Error).message}`)
+      }
+    }
+
+    setApiError('녹음 분석이 오래 걸리고 있습니다. 잠시 후 목록을 새로고침해 주세요.')
   }
 
   function selectSegment(segment: Segment) {
@@ -486,25 +637,29 @@ function App() {
           draftSearchQuery={draftRecordingSearchQuery}
           folderCounts={folderCounts}
           folders={folders}
+          isUploading={isUploading}
           recordings={filteredRecordings}
           selectedFolderId={selectedFolderId}
           selectedIds={checkedRecordingIds}
           selectedRecordingId={selectedRecording.id}
           sortDirection={recordingSortDirection}
           totalVisibleCount={folderScopedRecordings.length}
-          onAddFolder={addFolder}
+          onAddFolder={() => void addFolder()}
+          onAddRecordingFile={(file) => void addRecordingFile(file)}
           onApplySearch={() =>
             setAppliedRecordingSearchQuery(draftRecordingSearchQuery)
           }
-          onDeleteFolder={deleteSelectedFolder}
+          onDeleteFolder={() => void deleteSelectedFolder()}
           onDraftSearchQueryChange={setDraftRecordingSearchQuery}
-          onDropRecordingToFolder={moveRecordingToFolder}
-          onRemoveChecked={removeCheckedRecordings}
+          onDropRecordingToFolder={(recordingId, folderId) =>
+            void moveRecordingToFolder(recordingId, folderId)
+          }
+          onRemoveChecked={() => void removeCheckedRecordings()}
           onResetSearch={() => {
             setDraftRecordingSearchQuery('')
             setAppliedRecordingSearchQuery('')
           }}
-          onRenameFolder={renameFolder}
+          onRenameFolder={(folderId, name) => void renameFolder(folderId, name)}
           onSelectFolder={setSelectedFolderId}
           onToggleSortDirection={() =>
             setRecordingSortDirection((direction) =>
@@ -601,6 +756,8 @@ function App() {
           ) : null}
         </section>
       </section>
+
+      {apiError ? <div className="api-error-banner">{apiError}</div> : null}
     </main>
   )
 }

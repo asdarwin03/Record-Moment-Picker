@@ -1,6 +1,7 @@
 export type TranscriptItem = {
   t_id: string
-  time: number
+  start_time: number
+  end_time: number
   text: string
 }
 

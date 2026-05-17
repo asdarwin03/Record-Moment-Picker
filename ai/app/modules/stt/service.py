@@ -27,7 +27,11 @@ def transcribe_audio(audio_path: str | Path) -> list[dict]:
 
     Output:
     [
-      {"time": 41, "text": "안냥하세요, RecordMomentPicker 발표를 시작하겠습니다."}
+      {
+        "start_time": 41,
+        "end_time": 56,
+        "text": "안냥하세요, RecordMomentPicker 발표를 시작하겠습니다."
+      }
     ]
     """
     provider_name = settings.stt_provider

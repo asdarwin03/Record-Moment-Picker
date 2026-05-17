@@ -1,7 +1,7 @@
-const foldersByUserId = new Map();
+import { getDataState, saveDataState } from "./dataStore.js";
 
 export function listFolders(userId) {
-  return getUserFolders(userId);
+  return [...getUserFolders(userId)];
 }
 
 export function createFolder(userId, name) {
@@ -19,7 +19,7 @@ export function createFolder(userId, name) {
 
   const folders = getUserFolders(userId);
   folders.push(folder);
-  foldersByUserId.set(userId, folders);
+  saveDataState();
 
   return folder;
 }
@@ -38,6 +38,7 @@ export function renameFolder(userId, folderId, name) {
   }
 
   folder.name = trimmedName;
+  saveDataState();
   return folder;
 }
 
@@ -49,14 +50,18 @@ export function deleteFolder(userId, folderId) {
     return false;
   }
 
-  foldersByUserId.set(userId, nextFolders);
+  getDataState().foldersByUserId[String(userId)] = nextFolders;
+  saveDataState();
   return true;
 }
 
 function getUserFolders(userId) {
-  if (!foldersByUserId.has(userId)) {
-    foldersByUserId.set(userId, []);
+  const state = getDataState();
+  const key = String(userId);
+
+  if (!Array.isArray(state.foldersByUserId[key])) {
+    state.foldersByUserId[key] = [];
   }
 
-  return foldersByUserId.get(userId);
+  return state.foldersByUserId[key];
 }

@@ -15,6 +15,7 @@ type RecordingListPanelProps = {
   draftSearchQuery: string
   folderCounts: FolderCounts
   folders: RecordingFolder[]
+  isUploading: boolean
   recordings: Recording[]
   selectedFolderId: FolderSelection
   selectedIds: string[]
@@ -22,6 +23,7 @@ type RecordingListPanelProps = {
   sortDirection: RecordingSortDirection
   totalVisibleCount: number
   onAddFolder: () => void
+  onAddRecordingFile: (file: File) => void
   onDeleteFolder: () => void
   onDropRecordingToFolder: (recordingId: string, folderId?: string) => void
   onRemoveChecked: () => void
@@ -40,12 +42,14 @@ export function RecordingListPanel({
   folderCounts,
   folders,
   recordings,
+  isUploading,
   selectedFolderId,
   selectedIds,
   selectedRecordingId,
   sortDirection,
   totalVisibleCount,
   onAddFolder,
+  onAddRecordingFile,
   onApplySearch,
   onDeleteFolder,
   onDraftSearchQueryChange,
@@ -128,9 +132,24 @@ export function RecordingListPanel({
       </div>
 
       <div className="recording-actions">
-        <button type="button" disabled title="백엔드/AI 연결 후 활성화됩니다">
-          추가
-        </button>
+        <label className={classNames('recording-add-button', isUploading && 'disabled')}>
+          <input
+            className="audio-file-input"
+            type="file"
+            accept="audio/*"
+            disabled={isUploading}
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+
+              if (file) {
+                onAddRecordingFile(file)
+              }
+
+              event.target.value = ''
+            }}
+          />
+          {isUploading ? '분석 중' : '추가'}
+        </label>
         <button
           type="button"
           onClick={onRemoveChecked}

@@ -13,7 +13,8 @@ class STTItem(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    time: NonNegativeFloat = Field(..., description="Utterance start time in seconds.")
+    start_time: NonNegativeFloat = Field(..., description="Utterance start time in seconds.")
+    end_time: NonNegativeFloat = Field(..., description="Utterance end time in seconds.")
     text: NonEmptyString = Field(..., description="Raw transcript text from STT.")
 
 

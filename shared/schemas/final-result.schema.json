@@ -51,7 +51,7 @@
         "description": "Transcript items included in this segment.",
         "items": {
           "type": "object",
-          "required": ["t_id", "time", "text"],
+          "required": ["t_id", "start_time", "end_time", "text"],
           "additionalProperties": false,
           "properties": {
             "t_id": {
@@ -59,10 +59,15 @@
               "pattern": "^[0-9]{3,}$",
               "description": "Transcript item ID."
             },
-            "time": {
+            "start_time": {
               "type": "number",
               "minimum": 0,
               "description": "Start time of the transcript item in seconds."
+            },
+            "end_time": {
+              "type": "number",
+              "minimum": 0,
+              "description": "End time of the transcript item in seconds."
             },
             "text": {
               "type": "string",
