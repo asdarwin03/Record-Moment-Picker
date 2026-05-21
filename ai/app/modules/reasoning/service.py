@@ -233,6 +233,8 @@ def _normalize_segment_clues(
             t_id_order=t_id_order,
             top_k=MAX_CLUES_PER_SUMMARY,
         )
+        if not selected_t_ids:
+            selected_t_ids = _fallback_clue_t_ids(segment, summary_index)
         normalized.append(
             {"summary_index": summary_index, "clue": selected_t_ids}
         )
@@ -298,7 +300,7 @@ def _rank_and_truncate_scored_clues(
     for item in clue:
         t_id, score = _parse_clue_item(item)
         if t_id not in valid_t_ids:
-            raise SchemaValidationError(f"clue references unknown t_id: {t_id}")
+            continue
 
         previous = best_score_by_t_id.get(t_id)
         if previous is None or score > previous:
@@ -310,6 +312,18 @@ def _rank_and_truncate_scored_clues(
     )
     selected = [t_id for t_id, _ in ranked[:top_k]]
     return sorted(selected, key=lambda t_id: t_id_order[t_id])
+
+
+def _fallback_clue_t_ids(segment: dict, summary_index: int) -> list[str]:
+    """Return a deterministic in-segment clue when LLM evidence is unusable."""
+    texts = segment["texts"]
+    if not texts:
+        raise SchemaValidationError(
+            f"segment {segment['sid']} has summary but no transcript texts."
+        )
+
+    fallback_index = min(summary_index, len(texts) - 1)
+    return [texts[fallback_index]["t_id"]]
 
 
 def _parse_clue_item(item: Any) -> tuple[str, float]:

@@ -168,6 +168,7 @@ export function getRecordStatus(recordId, userId) {
     status: record.status,
     frontend_status: toFrontendStatus(record.status),
     progress: getProgress(record.status),
+    error_message: record.error_message,
   };
 }
 

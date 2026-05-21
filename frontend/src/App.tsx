@@ -430,7 +430,9 @@ function App() {
         const status = await fetchRecordingStatus(recordingId)
 
         if (status.status === 'failed') {
-          setApiError('녹음 분석 실패: AI 처리 중 오류가 발생했습니다.')
+          setApiError(
+            `녹음 분석 실패: ${status.error_message ?? 'AI 처리 중 오류가 발생했습니다.'}`,
+          )
           return
         }
 

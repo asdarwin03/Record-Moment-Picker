@@ -64,13 +64,13 @@ def validate_final_result(data: Any) -> FinalResult:
     if len(t_ids) != len(set(t_ids)):
         raise ValueError("final result contains duplicate transcript t_id values.")
 
-    valid_t_ids = set(t_ids)
     for segment in result:
+        valid_t_ids = {text.t_id for text in segment.texts}
         for clue in segment.clues:
             unknown_ids = set(clue.clue) - valid_t_ids
             if unknown_ids:
                 raise ValueError(
-                    f"final result clue references unknown t_id values: {sorted(unknown_ids)}."
+                    f"final result clue references t_id values outside segment {segment.sid}: {sorted(unknown_ids)}."
                 )
 
     return result

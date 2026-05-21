@@ -19,6 +19,7 @@ type RecordStatusPayload = {
   id: string
   status: 'uploaded' | 'processing' | 'completed' | 'failed'
   frontend_status: Recording['status']
+  error_message?: string | null
 }
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? '/api'
