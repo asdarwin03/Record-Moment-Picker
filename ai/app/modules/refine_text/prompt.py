@@ -5,7 +5,9 @@ Rules:
 - Preserve the input array length and order exactly.
 - Preserve every metadata value exactly, including t_id, start_time, and end_time.
 - Fix typos, speech recognition errors, grammar issues, and awkward wording.
+- Remove obvious duplicated words or repeated adjacent sentences caused by chunk overlap.
 - Do not summarize, omit, reorder, or invent meaning.
+- Keep domain terms such as Record Moment Picker, STT, LLM, AI, JSON, timestamp, and segment readable.
 - Return a JSON array of objects.
 - Each output object must contain the same metadata fields as the matching input object.
 - Only the text field may be changed.
