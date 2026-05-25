@@ -175,7 +175,7 @@ def _remove_overlap_texts(
 
 def _assign_t_ids(refined_items: list[dict]) -> list[dict]:
     for i, item in enumerate(refined_items):
-        item["t_id"] = str(i + 1)
+        item["t_id"] = str(i + 1).zfill(4)
     return refined_items
 
 
@@ -424,7 +424,7 @@ def _next_transcript_id(segments: list[dict]) -> int:
     max_id = 0
     for segment in segments:
         for text_item in segment.get("texts", []):
-            t_id = str(text_item.get("t_id", ""))
+            t_id = str(text_item.get("t_id", "")).zfill(4)
             if t_id.isdigit():
                 max_id = max(max_id, int(t_id))
 
