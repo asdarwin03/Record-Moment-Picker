@@ -46,19 +46,19 @@ Examples:
 
 Example A:
 Input:
-{"segments":[{"sid":"segment_a","summary":["Backend calls AI Service via HTTP API and stores the analysis result in DB"],"texts":[{"t_id":"401","start_time":241,"end_time":244,"text":"Frontend sends the upload request to Backend."},{"t_id":"402","start_time":245,"end_time":250,"text":"Backend calls AI Service's HTTP API to request recording analysis."},{"t_id":"403","start_time":251,"end_time":256,"text":"After analysis is complete, Backend stores the Final JSON result in DB."},{"t_id":"404","start_time":257,"end_time":260,"text":"AI Service should not access DB directly; it only returns the result."}]}]}
+{"segments":[{"sid":"segment_a","summary":["백엔드가 AI Service의 HTTP API를 호출하고 분석 결과를 DB에 저장함"],"texts":[{"t_id":"401","start_time":241,"end_time":244,"text":"프론트엔드는 업로드 요청을 백엔드로 보냅니다."},{"t_id":"402","start_time":245,"end_time":250,"text":"백엔드는 녹음 분석을 요청하기 위해 AI Service의 HTTP API를 호출합니다."},{"t_id":"403","start_time":251,"end_time":256,"text":"분석이 완료되면 백엔드는 Final JSON 결과를 DB에 저장합니다."},{"t_id":"404","start_time":257,"end_time":260,"text":"AI Service는 DB에 직접 접근하지 않고 결과만 반환해야 합니다."}]}]}
 Output:
 {"segments":[{"sid":"segment_a","clues":[{"summary_index":0,"clue":[{"t_id":"402","score":0.8},{"t_id":"403","score":0.8}]}]}]}
 
 Example B:
 Input:
-{"segments":[{"sid":"segment_b","summary":["Team members showed an overall negative reaction to the design draft"],"texts":[{"t_id":"1301","start_time":781,"end_time":784,"text":"Let's hear opinions about the design draft."},{"t_id":"1302","start_time":785,"end_time":789,"text":"Some said the first impression felt cramped."},{"t_id":"1303","start_time":790,"end_time":794,"text":"Some said the main color does not match the service concept."},{"t_id":"1304","start_time":795,"end_time":800,"text":"There was also feedback that the font is hard to read."},{"t_id":"1305","start_time":801,"end_time":806,"text":"Overall, the reaction was that the draft needs to be reworked."},{"t_id":"1306","start_time":807,"end_time":810,"text":"So we will ask the designer for revisions."}]}]}
+{"segments":[{"sid":"segment_b","summary":["팀원들이 디자인 시안에 대해 전반적으로 부정적인 반응을 보임"],"texts":[{"t_id":"1301","start_time":781,"end_time":784,"text":"그럼 디자인 시안에 대한 의견을 들어보겠습니다."},{"t_id":"1302","start_time":785,"end_time":789,"text":"몇몇 팀원은 첫인상이 답답하게 느껴진다고 말했습니다."},{"t_id":"1303","start_time":790,"end_time":794,"text":"메인 색상이 서비스 컨셉과 잘 맞지 않는다는 의견도 있었습니다."},{"t_id":"1304","start_time":795,"end_time":800,"text":"폰트가 읽기 어렵다는 피드백도 나왔습니다."},{"t_id":"1305","start_time":801,"end_time":806,"text":"전반적으로 이 시안은 다시 손볼 필요가 있다는 반응이었습니다."},{"t_id":"1306","start_time":807,"end_time":810,"text":"그래서 디자이너에게 수정 요청을 하겠습니다."}]}]}
 Output:
 {"segments":[{"sid":"segment_b","clues":[{"summary_index":0,"clue":[{"t_id":"1302","score":0.8},{"t_id":"1303","score":0.8},{"t_id":"1304","score":0.8},{"t_id":"1305","score":1.0}]}]}]}
 
 Example C:
 Input:
-{"segments":[{"sid":"segment_c","summary":["A meme is explained as content that users repeatedly modify and spread","This project will analyze meme diffusion patterns"],"texts":[{"t_id":"701","start_time":421,"end_time":425,"text":"A meme is content that people repeatedly modify, share, and spread."},{"t_id":"702","start_time":426,"end_time":431,"text":"In online communities, the same image is often changed with different captions."},{"t_id":"703","start_time":432,"end_time":437,"text":"In this project, we will analyze how such memes spread through different paths."}]}]}
+{"segments":[{"sid":"segment_c","summary":["밈은 사용자가 반복적으로 변형하고 공유하며 확산시키는 콘텐츠로 설명됨","이 프로젝트는 밈의 확산 패턴을 분석할 예정임"],"texts":[{"t_id":"701","start_time":421,"end_time":425,"text":"밈은 사람들이 반복적으로 변형하고 공유하며 퍼뜨리는 콘텐츠입니다."},{"t_id":"702","start_time":426,"end_time":431,"text":"온라인 커뮤니티에서는 같은 이미지가 서로 다른 문구와 함께 자주 변형됩니다."},{"t_id":"703","start_time":432,"end_time":437,"text":"이번 프로젝트에서는 그런 밈이 어떤 경로로 확산되는지 분석할 예정입니다."}]}]}
 Output:
 {"segments":[{"sid":"segment_c","clues":[{"summary_index":0,"clue":[{"t_id":"701","score":1.0},{"t_id":"702","score":0.6}]},{"summary_index":1,"clue":[{"t_id":"703","score":1.0}]}]}]}
 """.strip()
