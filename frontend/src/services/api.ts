@@ -64,6 +64,19 @@ export async function fetchRecording(recordingId: string) {
   return normalizeRecording(payload.recording)
 }
 
+export async function retryRecording(recordingId: string) {
+  const payload = await request<RecordDetailPayload>(
+    `/records/${encodeURIComponent(recordingId)}/retry`,
+    { method: 'POST' },
+  )
+
+  if (!payload.recording) {
+    throw new Error('재시도 응답에 녹음 정보가 없습니다.')
+  }
+
+  return normalizeRecording(payload.recording)
+}
+
 export function fetchRecordingStatus(recordingId: string) {
   return request<RecordStatusPayload>(
     `/records/${encodeURIComponent(recordingId)}/status`,

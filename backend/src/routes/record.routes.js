@@ -9,6 +9,7 @@ import {
   getRecordStatus,
   hideRecords,
   listRecords,
+  prepareRecordRetry,
   updateRecord,
 } from "../services/recordService.js";
 import { queueRecordProcessing } from "../services/recordProcessingService.js";
@@ -111,6 +112,37 @@ router.get("/:recordId/status", authenticate, (req, res) => {
     data: status,
     message: null,
   });
+});
+
+router.post("/:recordId/retry", authenticate, (req, res, next) => {
+  try {
+    const retryRecord = prepareRecordRetry(req.params.recordId, req.user.user_id);
+
+    if (!retryRecord) {
+      return res.status(404).json({
+        success: false,
+        data: null,
+        message: "Record not found",
+      });
+    }
+
+    queueRecordProcessing(retryRecord.record_id, retryRecord.file_path);
+
+    return res.status(202).json({
+      success: true,
+      data: {
+        ...retryRecord.detail,
+        recording: {
+          ...retryRecord.detail.recording,
+          status: "waiting",
+          error_message: null,
+        },
+      },
+      message: "Record queued for retry",
+    });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 router.patch("/:recordId", authenticate, (req, res, next) => {

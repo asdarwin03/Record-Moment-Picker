@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -16,6 +17,10 @@ from app.modules.segmenting.prompt import SEGMENT_TEXT_SYSTEM_PROMPT
 
 class LLMClientError(LLMProcessingError):
     """Raised when the LLM provider cannot return a usable response."""
+
+
+class LLMRateLimitError(LLMClientError):
+    """Raised when the LLM provider rejects requests due to rate limits."""
 
 
 @dataclass(frozen=True)
@@ -71,7 +76,7 @@ class LLMClient:
                     "type": "json_schema",
                     "name": schema_name,
                     "schema": response_schema,
-                    "strict": False,
+                    "strict": settings.llm_strict_json_schema,
                 }
             }
         else:
@@ -79,7 +84,7 @@ class LLMClient:
 
         text = self._create_response(payload)
         result = self._parse_json(text)
-        return self._unwrap_array_schema_result(result, schema)
+        return self._unwrap_array_schema_result(result, schema, schema_name)
 
     def generate_text(
         self,
@@ -105,6 +110,7 @@ class LLMClient:
             user_payload={"items": transcript_items},
             schema=load_shared_schema("refined-text.schema.json"),
             schema_name="refined_text",
+            max_output_tokens=settings.llm_refine_max_output_tokens,
         )
 
     def segment_text(self, refined_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -113,7 +119,7 @@ class LLMClient:
             user_payload={"items": refined_items},
             schema=load_shared_schema("structured-segments.schema.json"),
             schema_name="structured_segments",
-            max_output_tokens=8192,
+            max_output_tokens=settings.llm_segment_max_output_tokens,
         )
 
     def add_reasoning(self, segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -122,7 +128,7 @@ class LLMClient:
             user_payload={"segments": segments},
             schema=load_shared_schema("final-result.schema.json"),
             schema_name="final_result",
-            max_output_tokens=8192,
+            max_output_tokens=settings.llm_reasoning_max_output_tokens,
         )
 
     def _create_response(self, payload: dict[str, Any]) -> str:
@@ -168,13 +174,17 @@ class LLMClient:
                 last_error = error
 
             if attempt < self.config.max_retries:
-                time.sleep(2**attempt)
+                time.sleep(self._retry_delay_seconds(last_error, attempt))
+
+        if isinstance(last_error, HTTPError):
+            raise self._http_error(last_error) from last_error
 
         raise LLMClientError(f"LLM request failed: {last_error}") from last_error
 
     def _extract_output_text(self, data: dict[str, Any]) -> str:
         if data.get("status") not in {None, "completed"}:
-            raise LLMClientError(f"LLM response status is {data.get('status')!r}.")
+            detail = self._response_status_detail(data)
+            raise LLMClientError(f"LLM response status is {data.get('status')!r}{detail}.")
 
         if isinstance(data.get("output_text"), str):
             return data["output_text"]
@@ -191,12 +201,54 @@ class LLMClient:
 
         return "".join(chunks).strip()
 
+    def _response_status_detail(self, data: dict[str, Any]) -> str:
+        details = data.get("incomplete_details")
+        if isinstance(details, dict):
+            reason = details.get("reason")
+            if isinstance(reason, str) and reason:
+                return f" (reason: {reason})"
+
+        return ""
+
     def _http_error(self, error: HTTPError) -> LLMClientError:
         try:
             detail = error.read().decode("utf-8")
         except Exception:
             detail = error.reason
+
+        if error.code == 429:
+            retry_after = self._retry_after_seconds(error)
+            retry_message = (
+                f" Retry after about {retry_after:.0f} seconds."
+                if retry_after is not None
+                else " Retry after a short pause."
+            )
+            return LLMRateLimitError(
+                "LLM rate limit exceeded or quota is temporarily unavailable."
+                f"{retry_message} Provider response: {detail}"
+            )
+
         return LLMClientError(f"LLM request failed with HTTP {error.code}: {detail}")
+
+    def _retry_delay_seconds(self, error: Exception | None, attempt: int) -> float:
+        if isinstance(error, HTTPError):
+            retry_after = self._retry_after_seconds(error)
+            if retry_after is not None:
+                return retry_after
+
+        base_delay = 5 if isinstance(error, HTTPError) and error.code == 429 else 2
+        jitter = random.uniform(0, 0.75)
+        return min(60.0, base_delay * (2**attempt) + jitter)
+
+    def _retry_after_seconds(self, error: HTTPError) -> float | None:
+        retry_after = error.headers.get("Retry-After")
+        if not retry_after:
+            return None
+
+        try:
+            return min(120.0, max(0.0, float(retry_after)))
+        except ValueError:
+            return None
 
     def _build_json_prompt(self, system_prompt: str, user_payload: Any) -> list[dict[str, Any]]:
         return [
@@ -245,12 +297,39 @@ class LLMClient:
             },
         }
 
-    def _unwrap_array_schema_result(self, result: Any, schema: dict[str, Any] | None) -> Any:
+    def _unwrap_array_schema_result(
+        self,
+        result: Any,
+        schema: dict[str, Any] | None,
+        schema_name: str,
+    ) -> Any:
         if schema is None or self._strip_schema_metadata(schema).get("type") != "array":
             return result
 
-        if isinstance(result, dict) and isinstance(result.get("data"), list):
-            return result["data"]
+        unwrapped_result = self._unwrap_array_envelope(result, schema_name)
+        if isinstance(unwrapped_result, list):
+            return unwrapped_result
+
+        return result
+
+    def _unwrap_array_envelope(self, result: Any, schema_name: str) -> Any:
+        if isinstance(result, list):
+            return result
+
+        if not isinstance(result, dict):
+            return result
+
+        for key in (schema_name, "data"):
+            if key in result:
+                unwrapped = self._unwrap_array_envelope(result[key], schema_name)
+                if isinstance(unwrapped, list):
+                    return unwrapped
+
+        if len(result) == 1:
+            only_value = next(iter(result.values()))
+            unwrapped = self._unwrap_array_envelope(only_value, schema_name)
+            if isinstance(unwrapped, list):
+                return unwrapped
 
         return result
 

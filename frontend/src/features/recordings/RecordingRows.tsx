@@ -8,6 +8,7 @@ type RecordingRowsProps = {
   selectedRecordingId: string
   onDragEnd: () => void
   onDragStart: (recordingId: string) => void
+  onRetryRecording: (recording: Recording) => void
   onSelectRecording: (recording: Recording) => void
   onToggleChecked: (id: string) => void
 }
@@ -19,6 +20,7 @@ export function RecordingRows({
   selectedRecordingId,
   onDragEnd,
   onDragStart,
+  onRetryRecording,
   onSelectRecording,
   onToggleChecked,
 }: RecordingRowsProps) {
@@ -63,7 +65,39 @@ export function RecordingRows({
       />
       <span>{recording.name}</span>
       <span>{recording.date}</span>
-      {recording.status === 'waiting' ? (
+      {recording.status === 'failed' ? (
+        <span className="failed-status-wrapper">
+          <span className="failed-status-tooltip" role="tooltip">
+            {recording.error_message ?? '업로드 또는 AI 처리에 실패했습니다.'}
+            {' '}
+            클릭하면 다시 시도합니다.
+          </span>
+          <span
+            className="status failed"
+            role="button"
+            tabIndex={0}
+            title={`${
+              recording.error_message ?? '업로드 또는 AI 처리에 실패했습니다.'
+            } 클릭하면 다시 시도합니다.`}
+            aria-label={`분석 실패: ${
+              recording.error_message ?? '업로드 또는 AI 처리에 실패했습니다.'
+            } 클릭하면 다시 시도합니다.`}
+            onClick={(event) => {
+              event.stopPropagation()
+              onRetryRecording(recording)
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                event.stopPropagation()
+                onRetryRecording(recording)
+              }
+            }}
+          >
+            !
+          </span>
+        </span>
+      ) : recording.status === 'waiting' ? (
         <span className="status waiting" aria-label="녹음 정보 추가 중" />
       ) : (
         <span className="status complete" aria-hidden="true" />

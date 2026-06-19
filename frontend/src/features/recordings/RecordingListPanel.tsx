@@ -31,6 +31,7 @@ type RecordingListPanelProps = {
   onDraftSearchQueryChange: (query: string) => void
   onResetSearch: () => void
   onRenameFolder: (folderId: string, name: string) => void
+  onRetryRecording: (recording: Recording) => void
   onSelectFolder: (folderId: FolderSelection) => void
   onToggleSortDirection: () => void
   onToggleChecked: (id: string) => void
@@ -57,6 +58,7 @@ export function RecordingListPanel({
   onRemoveChecked,
   onRenameFolder,
   onResetSearch,
+  onRetryRecording,
   onSelectFolder,
   onSelectRecording,
   onToggleChecked,
@@ -126,6 +128,7 @@ export function RecordingListPanel({
           selectedRecordingId={selectedRecordingId}
           onDragEnd={resetDragState}
           onDragStart={setDraggingRecordingId}
+          onRetryRecording={onRetryRecording}
           onSelectRecording={onSelectRecording}
           onToggleChecked={onToggleChecked}
         />

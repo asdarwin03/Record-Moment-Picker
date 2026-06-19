@@ -1,4 +1,5 @@
 from app.core.exceptions import PipelineError
+from app.core.config import settings
 from app.clients.llm_client import default_llm_client, load_shared_schema
 from app.schemas.refined_text import validate_refined_text_output
 from app.schemas.segment import validate_structured_segments
@@ -6,7 +7,8 @@ from app.modules.segmenting.prompt import SEGMENT_TEXT_SYSTEM_PROMPT, MERGE_SEGM
 
 
 OVERLAP_SIZE = 15
-CHUNK_DURATION = 1800  # 30분 (초 단위)
+CHUNK_DURATION = settings.llm_segment_chunk_seconds
+SEGMENT_CONTENT_KEYS = {"start_time", "end_time", "title", "summary", "texts", "important"}
 
 
 def segment_text(refined_text: list[dict]) -> list[dict]:
@@ -77,6 +79,9 @@ def segment_text(refined_text: list[dict]) -> list[dict]:
         # 오버랩 발화 제거 (첫 번째 청크 제외)
         result = _remove_overlap_texts(result, chunk, is_first=(i == 0))
 
+        if not result:
+            raise PipelineError(f"chunk {i} 세그멘팅 결과가 비어 있습니다.")
+
         chunk_results.append(result)
 
         # 마지막 청크는 previous_summary 추출 불필요
@@ -130,15 +135,72 @@ def _call_segment_llm(
         )
 
     try:
-        return default_llm_client.generate_json(
+        raw_result = default_llm_client.generate_json(
             system_prompt=system_prompt,
             user_payload={"items": chunk},
             schema=load_shared_schema("structured-segments.schema.json"),
             schema_name="structured_segments",
-            max_output_tokens=8192,
+            max_output_tokens=settings.llm_segment_max_output_tokens,
         )
+        return _coerce_segment_list(raw_result, f"chunk {chunk_index} segmenting result")
     except Exception as e:
         raise PipelineError(f"LLM 호출 실패: {e}")
+
+
+def _coerce_segment_list(result, context: str) -> list[dict]:
+    segment_list = _find_segment_list(result)
+    if segment_list is not None:
+        return segment_list
+
+    if isinstance(result, dict):
+        if _looks_like_segment(result):
+            return [result]
+
+        detail = f" keys={sorted(str(key) for key in result.keys())}"
+    else:
+        detail = ""
+
+    raise PipelineError(
+        f"{context} must be a list of segments, got {type(result).__name__}.{detail}"
+    )
+
+
+def _find_segment_list(value) -> list[dict] | None:
+    if isinstance(value, list):
+        if value and all(isinstance(item, dict) and _looks_like_segment(item) for item in value):
+            return value
+        return None
+
+    if not isinstance(value, dict):
+        return None
+
+    if _looks_like_segment(value):
+        return [value]
+
+    for key in ("data", "segments", "structured_segments", "result", "response", "output"):
+        if key in value:
+            segment_list = _find_segment_list(value[key])
+            if segment_list is not None:
+                return segment_list
+
+    direct_segments = [
+        nested_value
+        for nested_value in value.values()
+        if isinstance(nested_value, dict) and _looks_like_segment(nested_value)
+    ]
+    if direct_segments:
+        return direct_segments
+
+    for nested_value in value.values():
+        segment_list = _find_segment_list(nested_value)
+        if segment_list is not None:
+            return segment_list
+
+    return None
+
+
+def _looks_like_segment(value: dict) -> bool:
+    return SEGMENT_CONTENT_KEYS <= set(value.keys())
 
 
 # ── 오버랩 발화 제거 ────────────────────────────────────
@@ -229,8 +291,9 @@ def _merge_boundaries(chunk_results: list[list[dict]]) -> list[list[dict]]:
                 },
                 schema=load_shared_schema("structured-segments.schema.json"),
                 schema_name="merged_segments",
-                max_output_tokens=4096,
+                max_output_tokens=settings.llm_merge_max_output_tokens,
             )
+            merged = _coerce_segment_list(merged, f"merged boundary {i} / {i + 1}")
         except Exception as e:
             raise PipelineError(f"경계 세그먼트 병합 실패 (chunk {i} / {i + 1}): {e}")
 
@@ -273,8 +336,9 @@ def _assemble_segments(
 
 def _post_process(segments: list[dict], refined_items: list[dict]) -> list[dict]:
     segments = _normalize_segment_boundaries(segments)
+    segments = _normalize_transcript_ids(segments)
     segments = _restore_missing_utterances(segments, refined_items)
-    return segments
+    return _drop_empty_segments(segments)
 
 
 # ── sid 재번호 부여 ──────────────────────────────────────
@@ -283,6 +347,36 @@ def _assign_sids(segments: list[dict]) -> list[dict]:
     for i, seg in enumerate(segments):
         seg["sid"] = f"segment_{str(i + 1).zfill(2)}"
     return segments
+
+
+def _normalize_transcript_ids(segments: list[dict]) -> list[dict]:
+    normalized_segments = []
+
+    for segment in segments:
+        normalized_texts = []
+        for text_item in segment.get("texts", []):
+            normalized_text = dict(text_item)
+            normalized_t_id = _normalize_transcript_id(normalized_text.get("t_id"))
+            if normalized_t_id:
+                normalized_text["t_id"] = normalized_t_id
+            normalized_texts.append(normalized_text)
+
+        normalized_segments.append({**segment, "texts": normalized_texts})
+
+    return normalized_segments
+
+
+def _drop_empty_segments(segments: list[dict]) -> list[dict]:
+    non_empty_segments = [
+        segment
+        for segment in segments
+        if segment.get("texts")
+    ]
+
+    if not non_empty_segments:
+        raise PipelineError("segmenting result has no transcript texts.")
+
+    return non_empty_segments
 
 
 # ── 입력 검증 ──────────────────────────────────────────
@@ -362,6 +456,12 @@ def _restore_missing_utterances(segments: list[dict], refined_text: list[dict]) 
         for segment in restored_segments
         for text_item in segment.get("texts", [])
     }
+    used_t_ids = {
+        normalized_t_id
+        for segment in restored_segments
+        for text_item in segment.get("texts", [])
+        if (normalized_t_id := _normalize_transcript_id(text_item.get("t_id")))
+    }
     next_t_id = _next_transcript_id(restored_segments)
 
     for item in refined_text:
@@ -370,15 +470,16 @@ def _restore_missing_utterances(segments: list[dict], refined_text: list[dict]) 
             continue
 
         target_segment = _find_best_segment_for_utterance(restored_segments, item)
+        restored_t_id, next_t_id = _restore_t_id(item, used_t_ids, next_t_id)
         target_segment.setdefault("texts", []).append(
             {
-                "t_id": str(next_t_id),
+                "t_id": restored_t_id,
                 "start_time": item["start_time"],
                 "end_time": item["end_time"],
                 "text": item["text"],
             }
         )
-        next_t_id += 1
+        used_t_ids.add(restored_t_id)
         covered_keys.add(item_key)
 
     for segment in restored_segments:
@@ -397,7 +498,7 @@ def _dedupe_segment_texts(segments: list[dict]) -> list[dict]:
     for segment in segments:
         deduped_texts = []
         for text_item in segment.get("texts", []):
-            key = _utterance_key(text_item)
+            key = _transcript_identity_key(text_item)
             if key in seen_keys:
                 continue
 
@@ -407,6 +508,15 @@ def _dedupe_segment_texts(segments: list[dict]) -> list[dict]:
         deduped_segments.append({**segment, "texts": deduped_texts})
 
     return _normalize_segment_boundaries(deduped_segments)
+
+
+def _transcript_identity_key(item: dict) -> tuple[str, str] | tuple[str, float, str]:
+    t_id = str(item.get("t_id", "")).strip()
+    if t_id:
+        return ("t_id", t_id)
+
+    start_time, text = _utterance_key(item)
+    return ("utterance", start_time, text)
 
 
 def _utterance_key(item: dict) -> tuple[float, str]:
@@ -424,11 +534,31 @@ def _next_transcript_id(segments: list[dict]) -> int:
     max_id = 0
     for segment in segments:
         for text_item in segment.get("texts", []):
-            t_id = str(text_item.get("t_id", "")).zfill(4)
-            if t_id.isdigit():
+            t_id = _normalize_transcript_id(text_item.get("t_id"))
+            if t_id:
                 max_id = max(max_id, int(t_id))
 
     return max_id + 1
+
+
+def _normalize_transcript_id(value: object) -> str:
+    t_id = str(value or "").strip()
+    if not t_id.isdigit():
+        return ""
+
+    return t_id.zfill(4)
+
+
+def _restore_t_id(item: dict, used_t_ids: set[str], next_t_id: int) -> tuple[str, int]:
+    source_t_id = _normalize_transcript_id(item.get("t_id"))
+    if source_t_id and source_t_id not in used_t_ids:
+        return source_t_id, max(next_t_id, int(source_t_id) + 1)
+
+    while True:
+        fallback_t_id = str(next_t_id).zfill(4)
+        next_t_id += 1
+        if fallback_t_id not in used_t_ids:
+            return fallback_t_id, next_t_id
 
 
 def _find_best_segment_for_utterance(segments: list[dict], utterance: dict) -> dict:

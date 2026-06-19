@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 from app.clients.llm_client import default_llm_client
+from app.core.config import settings
 from app.core.exceptions import SchemaValidationError
 from app.modules.reasoning.prompt import REASONING_SYSTEM_PROMPT
 from app.schemas.final_result import validate_final_result
@@ -46,7 +47,6 @@ REASONING_CLUES_SCHEMA: dict[str, Any] = {
                                 "summary_index": {"type": "integer"},
                                 "clue": {
                                     "type": "array",
-                                    "minItems": 1,
                                     "items": {
                                         "type": "object",
                                         "required": ["t_id", "score"],
@@ -87,7 +87,7 @@ def add_reasoning(structured_segments: list[dict]) -> list[dict]:
         user_payload=_build_reasoning_input(segments),
         schema=REASONING_CLUES_SCHEMA,
         schema_name="reasoning_clues",
-        max_output_tokens=4096,
+        max_output_tokens=settings.llm_reasoning_max_output_tokens,
     )
 
     clues_by_sid = _normalize_clues(raw_clue_result, segments)
@@ -163,41 +163,67 @@ def _extract_clues_by_sid(
 ) -> dict[str, list[Any]]:
     """LLM 응답 최상위 구조를 검증하고 sid → raw clue 리스트로 그룹핑한다."""
     if not isinstance(raw_result, dict):
-        raise SchemaValidationError("Reasoning result must be a JSON object.")
+        return {}
 
-    raw_segments = raw_result.get("segments")
-    if not isinstance(raw_segments, list):
-        raise SchemaValidationError("Reasoning result must contain a segments list.")
+    raw_segments = _find_reasoning_segments(raw_result, expected_sids)
+    if raw_segments is None:
+        return {}
 
     clues_by_sid: dict[str, list[Any]] = {}
     for raw_segment in raw_segments:
-        if (
-            not isinstance(raw_segment, dict)
-            or set(raw_segment.keys()) != {"sid", "clues"}
-        ):
-            raise SchemaValidationError(
-                "Each reasoning segment must have exactly sid and clues."
-            )
+        if not isinstance(raw_segment, dict):
+            continue
 
-        sid = raw_segment["sid"]
-        clues = raw_segment["clues"]
+        sid = raw_segment.get("sid")
+        clues = raw_segment.get("clues")
 
         if sid not in expected_sids:
-            raise SchemaValidationError(f"Reasoning returned unknown sid: {sid}")
-        if sid in clues_by_sid:
-            raise SchemaValidationError(f"Reasoning returned duplicate sid: {sid}")
+            continue
         if not isinstance(clues, list):
-            raise SchemaValidationError("Reasoning clues must be a list.")
+            continue
 
-        clues_by_sid[sid] = clues
+        clues_by_sid.setdefault(sid, []).extend(clues)
 
-    missing = expected_sids - clues_by_sid.keys()
-    if missing:
-        raise SchemaValidationError(
-            f"Reasoning did not return clues for sids: {sorted(missing)}."
-        )
+    for sid in expected_sids:
+        clues_by_sid.setdefault(sid, [])
 
     return clues_by_sid
+
+
+def _find_reasoning_segments(
+    value: Any,
+    expected_sids: set[str],
+) -> list[dict] | None:
+    if isinstance(value, list):
+        if all(isinstance(item, dict) for item in value):
+            return value
+        return None
+
+    if not isinstance(value, dict):
+        return None
+
+    raw_segments = value.get("segments")
+    if isinstance(raw_segments, list):
+        return raw_segments
+
+    mapped_segments = []
+    for key, nested_value in value.items():
+        if key not in expected_sids or not isinstance(nested_value, dict):
+            continue
+
+        mapped_segment = dict(nested_value)
+        mapped_segment.setdefault("sid", key)
+        mapped_segments.append(mapped_segment)
+
+    if mapped_segments:
+        return mapped_segments
+
+    for nested_value in value.values():
+        nested_segments = _find_reasoning_segments(nested_value, expected_sids)
+        if nested_segments is not None:
+            return nested_segments
+
+    return None
 
 
 def _normalize_segment_clues(
@@ -219,12 +245,14 @@ def _normalize_segment_clues(
     seen_indices: set[int] = set()
 
     for clue_object in raw_clues:
-        summary_index, raw_clue = _parse_clue_object(clue_object, summary_count)
+        parsed_clue = _try_parse_clue_object(clue_object, summary_count)
+        if parsed_clue is None:
+            continue
+
+        summary_index, raw_clue = parsed_clue
 
         if summary_index in seen_indices:
-            raise SchemaValidationError(
-                f"Duplicate summary_index in clues: {summary_index}."
-            )
+            continue
         seen_indices.add(summary_index)
 
         selected_t_ids = _rank_and_truncate_scored_clues(
@@ -239,12 +267,28 @@ def _normalize_segment_clues(
             {"summary_index": summary_index, "clue": selected_t_ids}
         )
 
-    if seen_indices != set(range(summary_count)):
-        raise SchemaValidationError(
-            "clues must cover every summary item exactly once."
+    for summary_index in range(summary_count):
+        if summary_index in seen_indices:
+            continue
+
+        normalized.append(
+            {
+                "summary_index": summary_index,
+                "clue": _fallback_clue_t_ids(segment, summary_index),
+            }
         )
 
     return sorted(normalized, key=lambda item: item["summary_index"])
+
+
+def _try_parse_clue_object(
+    clue_object: Any,
+    summary_count: int,
+) -> tuple[int, list[Any]] | None:
+    try:
+        return _parse_clue_object(clue_object, summary_count)
+    except SchemaValidationError:
+        return None
 
 
 def _parse_clue_object(
@@ -269,8 +313,8 @@ def _parse_clue_object(
         raise SchemaValidationError(
             f"summary_index {summary_index} is out of range."
         )
-    if not isinstance(clue, list) or not clue:
-        raise SchemaValidationError("clue must be a non-empty list.")
+    if not isinstance(clue, list):
+        raise SchemaValidationError("clue must be a list.")
 
     return summary_index, clue
 
@@ -298,7 +342,11 @@ def _rank_and_truncate_scored_clues(
 
     best_score_by_t_id: dict[str, float] = {}
     for item in clue:
-        t_id, score = _parse_clue_item(item)
+        try:
+            t_id, score = _parse_clue_item(item)
+        except SchemaValidationError:
+            continue
+
         if t_id not in valid_t_ids:
             continue
 

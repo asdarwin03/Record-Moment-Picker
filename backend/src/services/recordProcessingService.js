@@ -1,3 +1,4 @@
+import { preprocessAudioForAI } from "./audioPreprocessService.js";
 import { requestAudioProcessing } from "./aiClient.js";
 import {
   completeRecord,
@@ -8,24 +9,88 @@ import {
 
 const activeRecordIds = new Set();
 
-export function queueRecordProcessing(recordId, filePath) {
-  if (activeRecordIds.has(String(recordId))) {
-    return;
+const defaultDependencies = {
+  preprocessAudioForAI,
+  requestAudioProcessing,
+  completeRecord,
+  failRecord,
+  markRecordProcessing,
+};
+
+export function queueRecordProcessing(recordId, filePath, dependencyOverrides = {}) {
+  const dependencies = {
+    ...defaultDependencies,
+    ...dependencyOverrides,
+  };
+  const activeRecordId = String(recordId);
+
+  if (activeRecordIds.has(activeRecordId)) {
+    return false;
   }
 
-  activeRecordIds.add(String(recordId));
-  markRecordProcessing(recordId);
+  activeRecordIds.add(activeRecordId);
+
+  try {
+    dependencies.markRecordProcessing(recordId);
+  } catch (error) {
+    activeRecordIds.delete(activeRecordId);
+    throw error;
+  }
 
   setImmediate(async () => {
+    let preparedAudio = {
+      audioPath: filePath,
+      cleanup: async () => {},
+      usedPreprocessed: false,
+    };
+    let processingError = null;
+    let result;
+
     try {
-      const result = await requestAudioProcessing(filePath);
-      completeRecord(recordId, result);
+      try {
+        preparedAudio = await dependencies.preprocessAudioForAI(filePath);
+        if (preparedAudio.usedPreprocessed) {
+          console.log(
+            `[Backend][record:${recordId}] audio_preprocessing_completed path=${preparedAudio.audioPath}`
+          );
+        } else {
+          console.log(
+            `[Backend][record:${recordId}] audio_preprocessing_skipped reason=${preparedAudio.skippedReason}`
+          );
+        }
+      } catch (error) {
+        console.warn(
+          `[Backend][record:${recordId}] audio_preprocessing_failed fallback=original error=${error.message}`
+        );
+        preparedAudio = {
+          audioPath: filePath,
+          cleanup: async () => {},
+          usedPreprocessed: false,
+        };
+      }
+
+      result = await dependencies.requestAudioProcessing(preparedAudio.audioPath);
     } catch (error) {
-      failRecord(recordId, error.message);
+      processingError = error;
     } finally {
-      activeRecordIds.delete(String(recordId));
+      try {
+        await preparedAudio.cleanup();
+      } catch (error) {
+        console.warn(
+          `[Backend][record:${recordId}] audio_preprocessing_cleanup_failed error=${error.message}`
+        );
+      }
+      activeRecordIds.delete(activeRecordId);
+    }
+
+    if (processingError) {
+      dependencies.failRecord(recordId, processingError.message);
+    } else {
+      dependencies.completeRecord(recordId, result);
     }
   });
+
+  return true;
 }
 
 export function resumePendingRecordProcessing() {

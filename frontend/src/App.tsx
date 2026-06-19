@@ -17,6 +17,7 @@ import {
   fetchRecordingStatus,
   hideRecordings,
   renameFolder as renameFolderRequest,
+  retryRecording as retryRecordingRequest,
   updateRecordingFolder,
   uploadRecording,
 } from './services/api'
@@ -69,6 +70,7 @@ const processingStatuses = new Set(['uploaded', 'processing'])
 
 function App() {
   const trackFillRef = useRef<HTMLDivElement | null>(null)
+  const failedUploadFilesRef = useRef(new Map<string, File>())
 
   const [recordings, setRecordings] = useState(initialRecordings)
   const [selectedRecordingId, setSelectedRecordingId] = useState('club')
@@ -185,6 +187,8 @@ function App() {
     handleLoadedMetadata,
     handleTimeUpdate,
     isPlaying,
+    playbackRate,
+    cyclePlaybackRate,
     resetAudio,
     seekToTime,
     setAudioDuration,
@@ -398,6 +402,7 @@ function App() {
 
     setIsUploading(true)
     setApiError(null)
+    failedUploadFilesRef.current.set(temporaryRecording.id, file)
     setRecordings((items) => [temporaryRecording, ...items])
     selectRecording(temporaryRecording)
 
@@ -409,10 +414,19 @@ function App() {
         ),
       )
       selectRecording(uploadedRecording)
+      failedUploadFilesRef.current.delete(temporaryRecording.id)
       void pollRecordingUntilDone(uploadedRecording.id)
     } catch (error) {
       setRecordings((items) =>
-        items.filter((recording) => recording.id !== temporaryRecording.id),
+        items.map((recording) =>
+          recording.id === temporaryRecording.id
+            ? {
+                ...recording,
+                status: 'failed',
+                error_message: (error as Error).message,
+              }
+            : recording,
+        ),
       )
       setApiError(`녹음 분석 실패: ${(error as Error).message}`)
     } finally {
@@ -430,6 +444,18 @@ function App() {
         const status = await fetchRecordingStatus(recordingId)
 
         if (status.status === 'failed') {
+          setRecordings((items) =>
+            items.map((recording) =>
+              recording.id === recordingId
+                ? {
+                    ...recording,
+                    status: 'failed',
+                    error_message:
+                      status.error_message ?? 'AI 처리 중 오류가 발생했습니다.',
+                  }
+                : recording,
+            ),
+          )
           setApiError(
             `녹음 분석 실패: ${status.error_message ?? 'AI 처리 중 오류가 발생했습니다.'}`,
           )
@@ -453,6 +479,36 @@ function App() {
     }
 
     setApiError('녹음 분석이 오래 걸리고 있습니다. 잠시 후 목록을 새로고침해 주세요.')
+  }
+
+  async function retryRecording(recording: Recording) {
+    if (recording.id.startsWith('uploading-')) {
+      const failedUploadFile = failedUploadFilesRef.current.get(recording.id)
+
+      if (!failedUploadFile) {
+        setApiError('이 항목은 서버에 저장되지 않아 다시 업로드해야 합니다.')
+        return
+      }
+
+      failedUploadFilesRef.current.delete(recording.id)
+      setRecordings((items) => items.filter((item) => item.id !== recording.id))
+      await addRecordingFile(failedUploadFile)
+      return
+    }
+
+    try {
+      const retryingRecording = await retryRecordingRequest(recording.id)
+      setRecordings((items) =>
+        items.map((item) =>
+          item.id === recording.id ? retryingRecording : item,
+        ),
+      )
+      selectRecording(retryingRecording)
+      setApiError(null)
+      void pollRecordingUntilDone(retryingRecording.id)
+    } catch (error) {
+      setApiError(`재시도 실패: ${(error as Error).message}`)
+    }
   }
 
   function selectSegment(segment: Segment) {
@@ -625,9 +681,11 @@ function App() {
         duration={duration}
         hasAudio={Boolean(selectedRecording.audioUrl)}
         isPlaying={isPlaying}
+        playbackRate={playbackRate}
         selectedSid={selectedSid}
         segments={segments}
         trackFillRef={trackFillRef}
+        onPlaybackRateChange={cyclePlaybackRate}
         onPlayheadDragStart={startPlayheadDrag}
         onSeek={seekToTime}
         onSeekFromTrack={seekFromTrack}
@@ -662,6 +720,7 @@ function App() {
             setAppliedRecordingSearchQuery('')
           }}
           onRenameFolder={(folderId, name) => void renameFolder(folderId, name)}
+          onRetryRecording={(recording) => void retryRecording(recording)}
           onSelectFolder={setSelectedFolderId}
           onToggleSortDirection={() =>
             setRecordingSortDirection((direction) =>

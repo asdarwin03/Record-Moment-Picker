@@ -2,6 +2,8 @@ import { useCallback, useRef, useState } from 'react'
 import type { Recording, Segment } from '../types/finalResult'
 import { findSegmentByTime } from '../utils/segments'
 
+const PLAYBACK_RATES = [1, 1.25, 1.5, 2, 0.75] as const
+
 type UseAudioControllerOptions = {
   analysisDuration: number
   segments: Segment[]
@@ -19,7 +21,17 @@ export function useAudioController({
   const [currentTime, setCurrentTime] = useState(segments[0]?.start_time ?? 0)
   const [audioDuration, setAudioDuration] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [playbackRate, setPlaybackRate] = useState(1)
+  const playbackRateRef = useRef(1)
   const duration = Math.max(audioDuration, analysisDuration)
+
+  const applyPlaybackRate = useCallback(function applyPlaybackRate(nextRate: number) {
+    const audio = audioRef.current
+
+    if (audio) {
+      audio.playbackRate = nextRate
+    }
+  }, [])
 
   const seekToTime = useCallback(
     function seekToTime(nextTime: number) {
@@ -49,6 +61,7 @@ export function useAudioController({
       }
 
       if (audio.paused) {
+        audio.playbackRate = playbackRate
         await audio.play()
         setIsPlaying(true)
         return
@@ -57,7 +70,20 @@ export function useAudioController({
       audio.pause()
       setIsPlaying(false)
     },
-    [selectedRecording.audioUrl],
+    [playbackRate, selectedRecording.audioUrl],
+  )
+
+  const cyclePlaybackRate = useCallback(
+    function cyclePlaybackRate() {
+      setPlaybackRate((currentRate) => {
+        const currentIndex = PLAYBACK_RATES.findIndex((rate) => rate === currentRate)
+        const nextRate = PLAYBACK_RATES[(currentIndex + 1) % PLAYBACK_RATES.length]
+        playbackRateRef.current = nextRate
+        applyPlaybackRate(nextRate)
+        return nextRate
+      })
+    },
+    [applyPlaybackRate],
   )
 
   const resetAudio = useCallback(function resetAudio(nextTime: number) {
@@ -66,6 +92,7 @@ export function useAudioController({
     if (audio) {
       audio.pause()
       audio.currentTime = nextTime
+      audio.playbackRate = playbackRateRef.current
       audio.load()
     }
 
@@ -75,6 +102,7 @@ export function useAudioController({
   }, [])
 
   function handleLoadedMetadata(durationValue: number) {
+    applyPlaybackRate(playbackRate)
     setAudioDuration(Number.isFinite(durationValue) ? durationValue : 0)
   }
 
@@ -95,10 +123,12 @@ export function useAudioController({
     audioRef,
     audioDuration,
     currentTime,
+    cyclePlaybackRate,
     duration,
     handleLoadedMetadata,
     handleTimeUpdate,
     isPlaying,
+    playbackRate,
     resetAudio,
     seekToTime,
     setAudioDuration,

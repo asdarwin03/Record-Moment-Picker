@@ -179,6 +179,36 @@ export function listProcessableRecords() {
     .map((record) => ({ ...record }));
 }
 
+export function prepareRecordRetry(recordId, userId) {
+  const record = findRecord(recordId);
+  if (!record || record.user_id !== userId) {
+    return null;
+  }
+
+  if (!record.file_path) {
+    const error = new Error("Retry is unavailable because the audio file is missing");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (record.status === "processing") {
+    const error = new Error("Record is already processing");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  record.status = "uploaded";
+  record.error_message = null;
+  record.updated_at = new Date().toISOString();
+  saveDataState();
+
+  return {
+    record_id: record.record_id,
+    file_path: record.file_path,
+    detail: toRecordDetail(record),
+  };
+}
+
 function requireRecord(recordId) {
   const record = findRecord(recordId);
   if (!record) {
@@ -246,6 +276,7 @@ function toFrontendRecording(record) {
     date: toDateOnly(record.created_at),
     status: toFrontendStatus(record.status),
     segments: record.result || [],
+    error_message: record.error_message,
   };
 
   const audioUrl = getPublicUploadUrl(record.stored_filename);
@@ -265,6 +296,10 @@ function toFrontendRecording(record) {
 }
 
 function toFrontendStatus(status) {
+  if (status === "failed") {
+    return "failed";
+  }
+
   return status === "completed" ? "done" : "waiting";
 }
 

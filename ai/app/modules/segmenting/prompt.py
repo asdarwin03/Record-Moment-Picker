@@ -126,8 +126,8 @@ may be explained through multiple distinct phases.
     ],
     "texts": [                     // non-overlap utterances only, in time order
                                    // use t_id exactly as provided in input
-      {"t_id": "1", "start_time": 41, "end_time": 56, "text": "..."},
-      {"t_id": "2", "start_time": 57, "end_time": 81, "text": "..."}
+      {"t_id": "0001", "start_time": 41, "end_time": 56, "text": "..."},
+      {"t_id": "0002", "start_time": 57, "end_time": 81, "text": "..."}
     ],
     "important": [                 // moments worth replaying, empty [] if none qualify
                                    // time: use the utterance's start_time
@@ -248,8 +248,8 @@ Step 3: Apply the following rules:
     ],
     "texts": [                     // all utterances in time order
                                    // use t_id exactly as provided
-      {"t_id": "86", "start_time": 500, "end_time": 510, "text": "..."},
-      {"t_id": "87", "start_time": 511, "end_time": 520, "text": "..."}
+      {"t_id": "0086", "start_time": 500, "end_time": 510, "text": "..."},
+      {"t_id": "0087", "start_time": 511, "end_time": 520, "text": "..."}
     ],
     "important": [                 // moments worth replaying, empty [] if none qualify
                                    // "time" must be the start_time of the utterance in texts

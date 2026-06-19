@@ -7,6 +7,7 @@ type TransportBarProps = {
   currentTime: number
   duration: number
   isPlaying: boolean
+  playbackRate: number
   selectedSid: string
   hasAudio: boolean
   segments: Segment[]
@@ -14,6 +15,7 @@ type TransportBarProps = {
   onSeek: (time: number) => void
   onSeekFromTrack: (event: MouseEvent<HTMLDivElement>) => void
   onPlayheadDragStart: (event: PointerEvent<HTMLButtonElement>) => void
+  onPlaybackRateChange: () => void
   onTogglePlayback: () => void
 }
 
@@ -21,6 +23,7 @@ export function TransportBar({
   currentTime,
   duration,
   isPlaying,
+  playbackRate,
   selectedSid,
   hasAudio,
   segments,
@@ -28,13 +31,21 @@ export function TransportBar({
   onSeek,
   onSeekFromTrack,
   onPlayheadDragStart,
+  onPlaybackRateChange,
   onTogglePlayback,
 }: TransportBarProps) {
   return (
     <header className="transport-bar" aria-label="재생 컨트롤">
       <button className="record-dot" type="button" aria-label="녹음" />
-      <button className="speed-button" type="button">
-        1.0x
+      <button
+        className="speed-button"
+        type="button"
+        onClick={onPlaybackRateChange}
+        disabled={!hasAudio}
+        aria-label={`재생 속도 ${playbackRate}배`}
+        title={hasAudio ? '재생 속도 변경' : '오디오 파일을 추가하면 배속을 변경할 수 있습니다'}
+      >
+        {playbackRate.toFixed(playbackRate % 1 === 0 ? 1 : 2)}x
       </button>
       <button
         className="round-tool"

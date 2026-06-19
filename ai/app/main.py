@@ -1,6 +1,7 @@
 import os
 import json
 import tempfile
+import time
 import traceback
 from typing import Any
 
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.exceptions import AIServiceError, PipelineError, SchemaValidationError
+from app.core.tracing import configure_logging, log_event, new_request_id, request_context, track_stage
 from app.modules.reasoning.service import add_reasoning
 from app.modules.refine_text.service import refine_text
 from app.modules.segmenting.service import segment_text
@@ -20,6 +22,7 @@ from app.schemas.final_result import validate_final_result
 from app.schemas.stt import STTItem, validate_stt_output
 
 app = FastAPI()
+configure_logging()
 
 
 class ProcessTextRequest(BaseModel):
@@ -54,43 +57,87 @@ async def health_check():
 
 @app.post("/process-audio")
 async def process_audio(file: UploadFile = File(...)):
+    request_id = new_request_id()
+    started_at = time.perf_counter()
     audio_content = await file.read()
 
-    if len(audio_content) > settings.max_audio_upload_bytes:
-        max_mb = settings.max_audio_upload_bytes / 1024 / 1024
-        raise PipelineError(
-            f"Audio file is too large for local processing. "
-            f"Current limit is {max_mb:.0f} MB. "
-            "Shorten the audio or increase AI_MAX_AUDIO_UPLOAD_BYTES in .env."
+    with request_context(request_id):
+        log_event(
+            "process_audio_received",
+            filename=file.filename,
+            content_type=file.content_type,
+            size_bytes=len(audio_content),
+            size_mb=len(audio_content) / 1024 / 1024,
+            pipeline_mode=settings.ai_pipeline_mode,
         )
 
-    if settings.ai_pipeline_mode == "demo":
-        final_json = _load_demo_result()
-        final_json = _ensure_final_result(final_json)
+        if len(audio_content) > settings.max_audio_upload_bytes:
+            max_mb = settings.max_audio_upload_bytes / 1024 / 1024
+            log_event(
+                "process_audio_rejected",
+                reason="file_too_large",
+                max_mb=max_mb,
+            )
+            raise PipelineError(
+                f"Audio file is too large for local processing. "
+                f"Current limit is {max_mb:.0f} MB. "
+                "Shorten the audio or increase AI_MAX_AUDIO_UPLOAD_BYTES in .env."
+            )
+
+        if settings.ai_pipeline_mode == "demo":
+            with track_stage("demo_result"):
+                final_json = _load_demo_result()
+                final_json = _ensure_final_result(final_json)
+            log_event(
+                "process_audio_completed",
+                segments=len(final_json),
+                elapsed_seconds=time.perf_counter() - started_at,
+            )
+            return {
+                "status": "success",
+                "data": final_json,
+                "message": "AI_PIPELINE_MODE=demo: returned bundled sample result.",
+            }
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file.filename) as temp:
+            temp.write(audio_content)
+            temp_path = temp.name
+
+        log_event("process_audio_saved_temp", temp_path=temp_path)
+
+        try:
+            final_json = await run_in_threadpool(run_pipeline, temp_path)
+            with track_stage("final_validation", input_segments=len(final_json)):
+                final_json = _ensure_final_result(final_json)
+        except Exception as error:
+            log_event(
+                "process_audio_failed",
+                elapsed_seconds=time.perf_counter() - started_at,
+                error_type=error.__class__.__name__,
+                error=str(error),
+            )
+            raise
+        finally:
+            try:
+                os.unlink(temp_path)
+                log_event("process_audio_temp_deleted", temp_path=temp_path)
+            except OSError as error:
+                log_event(
+                    "process_audio_temp_delete_failed",
+                    temp_path=temp_path,
+                    error=str(error),
+                )
+
+        log_event(
+            "process_audio_completed",
+            segments=len(final_json),
+            elapsed_seconds=time.perf_counter() - started_at,
+        )
         return {
             "status": "success",
             "data": final_json,
-            "message": "AI_PIPELINE_MODE=demo: returned bundled sample result.",
+            "message": None,
         }
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=file.filename) as temp:
-        temp.write(audio_content)
-        temp_path = temp.name
-
-    try:
-        final_json = await run_in_threadpool(run_pipeline, temp_path)
-        final_json = _ensure_final_result(final_json)
-    finally:
-        try:
-            os.unlink(temp_path)
-        except OSError:
-            pass
-
-    return {
-        "status": "success",
-        "data": final_json,
-        "message": None,
-    }
 
 
 @app.post("/process-stt")
@@ -115,11 +162,25 @@ async def process_stt(file: UploadFile = File(...)):
 
 @app.post("/process-text")
 async def process_text(payload: ProcessTextRequest):
-    stt_items = [item.model_dump() for item in validate_stt_output(payload.items)]
+    request_id = new_request_id()
 
-    refined_result = _ensure_stage_result(refine_text(stt_items), "refine_text")
-    structured_segments = _ensure_stage_result(segment_text(refined_result), "segmenting")
-    final_json = _ensure_final_result(add_reasoning(structured_segments))
+    with request_context(request_id):
+        stt_items = [item.model_dump() for item in validate_stt_output(payload.items)]
+        log_event("process_text_received", items=len(stt_items))
+
+        with track_stage("refine_text", input_items=len(stt_items)):
+            refined_result = _ensure_stage_result(refine_text(stt_items), "refine_text")
+            log_event("stage_result", stage="refine_text", items=len(refined_result))
+
+        with track_stage("segmenting", input_items=len(refined_result)):
+            structured_segments = _ensure_stage_result(segment_text(refined_result), "segmenting")
+            log_event("stage_result", stage="segmenting", segments=len(structured_segments))
+
+        with track_stage("reasoning", input_segments=len(structured_segments)):
+            final_json = _ensure_final_result(add_reasoning(structured_segments))
+            log_event("stage_result", stage="reasoning", segments=len(final_json))
+
+        log_event("process_text_completed", segments=len(final_json))
 
     return {
         "status": "success",

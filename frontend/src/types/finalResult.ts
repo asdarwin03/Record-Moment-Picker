@@ -30,9 +30,10 @@ export type Recording = {
   id: string
   name: string
   date: string
-  status: 'waiting' | 'done'
+  status: 'waiting' | 'done' | 'failed'
   segments: Segment[]
   audioUrl?: string
+  error_message?: string | null
   folderId?: string
   isHidden?: boolean
 }

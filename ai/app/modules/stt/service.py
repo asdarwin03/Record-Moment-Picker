@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Callable
 
 from app.core.config import settings
 from app.core.exceptions import STTProcessingError
+from app.core.tracing import log_event
 from app.schemas.stt import validate_stt_output
 from app.modules.stt.providers import faster_whisper, openai_stt, whisper, whisperx
 
@@ -56,11 +58,14 @@ def transcribe_audio(audio_path: str | Path) -> list[dict]:
     """
     provider_name = settings.stt_provider
     transcribe = _get_provider(provider_name)
+    log_event("stt_provider_selected", provider=provider_name, audio_path=audio_path)
 
     try:
         stt_output = _transcribe_with_optional_chunking(audio_path, transcribe)
         validated_output = validate_stt_output(stt_output)
-        return [item.model_dump() for item in validated_output]
+        result = [item.model_dump() for item in validated_output]
+        log_event("stt_validated", items=len(result))
+        return result
     except STTProcessingError:
         raise
     except Exception as error:
@@ -87,15 +92,23 @@ def _transcribe_with_optional_chunking(
     options = _chunking_options_from_env()
 
     if not options.enabled:
+        log_event("stt_chunking_skipped", reason="disabled")
         return transcribe(path)
 
     duration_seconds = _get_audio_duration_seconds(path, options.command_timeout_seconds)
     if duration_seconds is None or duration_seconds < options.min_duration_seconds:
+        log_event(
+            "stt_chunking_skipped",
+            reason="short_or_unknown_duration",
+            duration_seconds=duration_seconds,
+            min_duration_seconds=options.min_duration_seconds,
+        )
         return transcribe(path)
 
     try:
         return _transcribe_audio_chunks(path, duration_seconds, transcribe, options)
-    except _ChunkingError:
+    except _ChunkingError as error:
+        log_event("stt_chunking_fallback", error=str(error))
         return transcribe(path)
 
 
@@ -106,14 +119,33 @@ def _transcribe_audio_chunks(
     options: ChunkingOptions,
 ) -> list[dict]:
     chunk_items: list[dict] = []
+    ranges = _iter_chunk_ranges(
+        duration_seconds,
+        options.chunk_seconds,
+        options.overlap_seconds,
+    )
+    log_event(
+        "stt_chunking_started",
+        duration_seconds=duration_seconds,
+        chunks=len(ranges),
+        chunk_seconds=options.chunk_seconds,
+        overlap_seconds=options.overlap_seconds,
+    )
 
     with tempfile.TemporaryDirectory(prefix="record_moment_stt_chunks_") as temp_dir:
         temp_path = Path(temp_dir)
 
-        for index, (start_time, chunk_duration) in enumerate(
-            _iter_chunk_ranges(duration_seconds, options.chunk_seconds, options.overlap_seconds)
-        ):
+        for index, (start_time, chunk_duration) in enumerate(ranges):
+            chunk_started_at = time.perf_counter()
             chunk_path = temp_path / f"chunk_{index:04d}.wav"
+            log_event(
+                "stt_chunk_started",
+                chunk_index=index,
+                chunks=len(ranges),
+                start_time=start_time,
+                duration_seconds=chunk_duration,
+                chunk_path=chunk_path,
+            )
             _write_audio_chunk(
                 audio_path,
                 chunk_path,
@@ -123,9 +155,23 @@ def _transcribe_audio_chunks(
             )
 
             chunk_result = transcribe(chunk_path)
-            chunk_items.extend(_offset_chunk_result(chunk_result, start_time))
+            offset_chunk_result = _offset_chunk_result(chunk_result, start_time)
+            chunk_items.extend(offset_chunk_result)
+            log_event(
+                "stt_chunk_completed",
+                chunk_index=index,
+                raw_items=len(chunk_result),
+                items=len(offset_chunk_result),
+                elapsed_seconds=time.perf_counter() - chunk_started_at,
+            )
 
-    return _deduplicate_chunk_items(chunk_items)
+    deduplicated_items = _deduplicate_chunk_items(chunk_items)
+    log_event(
+        "stt_chunking_completed",
+        raw_items=len(chunk_items),
+        deduplicated_items=len(deduplicated_items),
+    )
+    return deduplicated_items
 
 
 def _iter_chunk_ranges(

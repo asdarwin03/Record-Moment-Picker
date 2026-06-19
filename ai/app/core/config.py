@@ -20,7 +20,7 @@ def _load_dotenv() -> None:
     except ImportError as error:
         raise ConfigurationError(
             "python-dotenv is required to load .env. "
-            "Run `.\.venv\\Scripts\\python.exe -m pip install -r requirements.txt`."
+            "Run `.\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt`."
         ) from error
 
     load_dotenv(env_path, override=True)
@@ -58,6 +58,20 @@ def _env_float(name: str, default: float) -> float:
         raise ConfigurationError(f"{name} must be a number.") from error
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = _env_str(name)
+    if value is None:
+        return default
+
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+
+    raise ConfigurationError(f"{name} must be a boolean.")
+
+
 @dataclass(frozen=True)
 class Settings:
     """Runtime settings for the AI service.
@@ -85,6 +99,12 @@ class Settings:
     llm_timeout_seconds: int = 60
     llm_max_retries: int = 2
     llm_temperature: float = 0.0
+    llm_strict_json_schema: bool = True
+    llm_refine_max_output_tokens: int = 4096
+    llm_segment_chunk_seconds: int = 300
+    llm_segment_max_output_tokens: int = 32768
+    llm_merge_max_output_tokens: int = 8192
+    llm_reasoning_max_output_tokens: int = 8192
 
     temp_dir: Path | None = None
 
@@ -111,6 +131,12 @@ class Settings:
             llm_timeout_seconds=_env_int("LLM_TIMEOUT_SECONDS", 60),
             llm_max_retries=_env_int("LLM_MAX_RETRIES", 2),
             llm_temperature=_env_float("LLM_TEMPERATURE", 0.0),
+            llm_strict_json_schema=_env_bool("LLM_STRICT_JSON_SCHEMA", True),
+            llm_refine_max_output_tokens=_env_int("LLM_REFINE_MAX_OUTPUT_TOKENS", 4096),
+            llm_segment_chunk_seconds=_env_int("LLM_SEGMENT_CHUNK_SECONDS", 300),
+            llm_segment_max_output_tokens=_env_int("LLM_SEGMENT_MAX_OUTPUT_TOKENS", 32768),
+            llm_merge_max_output_tokens=_env_int("LLM_MERGE_MAX_OUTPUT_TOKENS", 8192),
+            llm_reasoning_max_output_tokens=_env_int("LLM_REASONING_MAX_OUTPUT_TOKENS", 8192),
             temp_dir=Path(temp_dir).expanduser().resolve() if temp_dir else None,
         )
         settings.validate()
@@ -143,6 +169,21 @@ class Settings:
 
         if self.llm_max_retries < 0:
             raise ConfigurationError("LLM_MAX_RETRIES must be greater than or equal to 0.")
+
+        if self.llm_refine_max_output_tokens <= 0:
+            raise ConfigurationError("LLM_REFINE_MAX_OUTPUT_TOKENS must be greater than 0.")
+
+        if self.llm_segment_chunk_seconds <= 0:
+            raise ConfigurationError("LLM_SEGMENT_CHUNK_SECONDS must be greater than 0.")
+
+        if self.llm_segment_max_output_tokens <= 0:
+            raise ConfigurationError("LLM_SEGMENT_MAX_OUTPUT_TOKENS must be greater than 0.")
+
+        if self.llm_merge_max_output_tokens <= 0:
+            raise ConfigurationError("LLM_MERGE_MAX_OUTPUT_TOKENS must be greater than 0.")
+
+        if self.llm_reasoning_max_output_tokens <= 0:
+            raise ConfigurationError("LLM_REASONING_MAX_OUTPUT_TOKENS must be greater than 0.")
 
         if self.whisper_cpu_threads <= 0:
             raise ConfigurationError("WHISPER_CPU_THREADS must be greater than 0.")

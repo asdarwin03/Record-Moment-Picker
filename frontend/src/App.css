@@ -74,6 +74,11 @@
   font-weight: 700;
 }
 
+.speed-button:disabled {
+  color: #94a3b8 !important;
+  cursor: not-allowed;
+}
+
 .round-tool {
   width: 34px;
   color: var(--muted) !important;
@@ -678,6 +683,63 @@
 
 .status.complete {
   visibility: hidden;
+}
+
+.failed-status-wrapper {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  justify-self: center;
+}
+
+.status.failed {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--red);
+  border-radius: 50%;
+  background: #fff;
+  color: var(--red);
+  font-size: 0.9rem;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.status.failed:hover,
+.status.failed:focus-visible {
+  background: #fef2f2;
+  outline: 3px solid rgba(220, 38, 38, 0.16);
+}
+
+.failed-status-tooltip {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 8px);
+  z-index: 20;
+  width: max-content;
+  max-width: min(280px, 56vw);
+  padding: 8px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--red);
+  box-shadow: var(--small-shadow);
+  font-size: 0.78rem;
+  font-weight: 750;
+  line-height: 1.35;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(4px);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.failed-status-wrapper:hover .failed-status-tooltip,
+.failed-status-wrapper:focus-within .failed-status-tooltip {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
 }
 
 @keyframes status-spin {
