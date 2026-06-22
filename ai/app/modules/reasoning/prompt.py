@@ -62,3 +62,93 @@ Input:
 Output:
 {"segments":[{"sid":"segment_c","clues":[{"summary_index":0,"clue":[{"t_id":"701","score":1.0},{"t_id":"702","score":0.6}]},{"summary_index":1,"clue":[{"t_id":"703","score":1.0}]}]}]}
 """.strip()
+
+
+DECOMPOSE_SUMMARIES_SYSTEM_PROMPT = """
+You split summary sentences into atomic meaning units.
+
+Input: {"segments":[{"sid":"segment_01","summary":["..."]}]}.
+Each summary entry is one sentence that may combine several distinct claims.
+
+Return only this structure:
+{"segments":[{"sid":"segment_01","summaries":[{"summary_index":0,"summary_units":[{"unit_text":"..."}]}]}]}
+
+Hard output rules:
+- Return JSON only. No markdown, comments, or explanation.
+- Root key: segments only.
+- One output segment per input segment, in the same sid order.
+- For every summary sentence, return one summaries entry with its summary_index.
+- summary_index is 0-based and matches the input summary position.
+- Each summary_unit has key unit_text only.
+
+Decomposition rules:
+- Coverage priority: preserve the distinct evidence targets inside the summary.
+- Extract every independently checkable claim, decision, objection, risk, constraint, metric, and follow-up action, up to 3 units.
+- Split when a summary joins ideas with and, but, while, because, after, before, or list-like wording.
+- Do not collapse decisions, risks, objections, and follow-up actions into one unit.
+- Split contrastive or debated claims: "sales wants X, support argues Y" must become separate units.
+- Split multi-part decisions: "do A, defer B, and prepare C" must become separate units.
+- If there are more than 3 possible units, keep the 3 most distinctive or decision-relevant units.
+- Do not split into fragments that cannot be checked against transcript evidence.
+- An atomic summary stays as exactly one unit (copy its meaning, may shorten).
+- Maximum 3 units per summary. Prefer complete coverage over fewer units for complex meeting summaries.
+- Each unit_text is a short clause in the input language describing one claim.
+- Do not invent claims that are not in the summary. Do not merge separate summaries.
+
+Examples:
+
+Example A (atomic -> 1 unit):
+Input: {"segments":[{"sid":"segment_01","summary":["Record Moment Picker 발표가 시작됨"]}]}
+Output: {"segments":[{"sid":"segment_01","summaries":[{"summary_index":0,"summary_units":[{"unit_text":"발표가 시작됨"}]}]}]}
+
+Example B (compound -> 2 units):
+Input: {"segments":[{"sid":"segment_02","summary":["발표의 목차와 진행 방향을 설명함"]}]}
+Output: {"segments":[{"sid":"segment_02","summaries":[{"summary_index":0,"summary_units":[{"unit_text":"발표의 목차를 설명함"},{"unit_text":"발표의 진행 방향을 설명함"}]}]}]}
+
+Example C (meeting debate -> 2 units):
+Input: {"segments":[{"sid":"segment_03","summary":["영업팀은 관리자 리포트를 요구하고, 지원팀은 안정성 개선을 더 급하다고 주장한다."]}]}
+Output: {"segments":[{"sid":"segment_03","summaries":[{"summary_index":0,"summary_units":[{"unit_text":"영업팀은 관리자 리포트를 요구한다."},{"unit_text":"지원팀은 안정성 개선을 더 급하다고 주장한다."}]}]}]}
+
+Example D (multi-part decision -> 3 units):
+Input: {"segments":[{"sid":"segment_04","summary":["팀은 Q3에 안정성 개선과 리포트 MVP를 우선하고 오프라인 모드는 프로토타입만 진행하기로 결정한다."]}]}
+Output: {"segments":[{"sid":"segment_04","summaries":[{"summary_index":0,"summary_units":[{"unit_text":"Q3에 안정성 개선을 우선한다."},{"unit_text":"Q3에 리포트 MVP를 우선한다."},{"unit_text":"오프라인 모드는 프로토타입만 진행한다."}]}]}]}
+""".strip()
+
+
+MAP_UNITS_SYSTEM_PROMPT = """
+You pick one supporting transcript t_id for each meaning unit.
+
+Input: {"segments":[{"sid":"segment_01","texts":[{"t_id":"001","start_time":0,"end_time":3,"text":"..."}],"summaries":[{"summary_index":0,"summary_units":[{"unit_text":"..."}]}]}]}.
+Each unit_text is one atomic claim. Each text has a t_id and transcript text.
+
+Return only this structure:
+{"segments":[{"sid":"segment_01","summaries":[{"summary_index":0,"summary_units":[{"unit_text":"...","clue":"001"}]}]}]}
+
+Hard output rules:
+- Return JSON only. No markdown, comments, or explanation.
+- Root key: segments only.
+- Echo every segment, summary, and unit in the same order as the input.
+- Keep unit_text unchanged. Add exactly one key clue to each unit.
+- clue is a single t_id string that exists in the same segment's texts.
+- Never invent a t_id or use another segment's t_id.
+
+Evidence rules:
+- Input may be Korean or English; match by meaning, not surface wording.
+- Each unit is evaluated independently. Do not let evidence for one unit satisfy a different unit.
+- For each unit, choose the single t_id that most directly supports that unit's claim.
+- Do not leave a unit weakly mapped just because another unit already has strong evidence.
+- Prefer coverage across distinct units over repeating evidence for the same idea.
+- Same topic is not enough. Prefer the most decisive, specific text.
+- A concise direct statement is better than a broad context sentence.
+- For decisions, choose the t_id that states the decision, not only the discussion that led to it.
+- For objections, risks, constraints, or metrics, choose the t_id that states that specific objection, risk, constraint, or metric.
+- Exclude setup/background/transition/next-step text unless it directly states the claim.
+
+Example:
+Input: {"segments":[{"sid":"segment_02","texts":[{"t_id":"003","start_time":83,"end_time":107,"text":"이번 발표의 목차는 개요와 데이터 흐름 순서입니다."},{"t_id":"005","start_time":135,"end_time":145,"text":"중요한 순간을 자동으로 찾는 방향으로 진행하겠습니다."}],"summaries":[{"summary_index":0,"summary_units":[{"unit_text":"발표의 목차를 설명함"},{"unit_text":"발표의 진행 방향을 설명함"}]}]}]}
+Output: {"segments":[{"sid":"segment_02","summaries":[{"summary_index":0,"summary_units":[{"unit_text":"발표의 목차를 설명함","clue":"003"},{"unit_text":"발표의 진행 방향을 설명함","clue":"005"}]}]}]}
+
+Example:
+Input: {"segments":[{"sid":"segment_04","texts":[{"t_id":"061","start_time":1200,"end_time":1220,"text":"영업팀은 대형 계약 두 건이 관리자 리포트 기능 때문에 보류되어 있다고 보고했습니다."},{"t_id":"064","start_time":1262,"end_time":1283,"text":"지원 쪽에서는 새 기능보다 안정성 개선을 Q3 최우선으로 올려야 한다고 주장합니다."},{"t_id":"070","start_time":1388,"end_time":1409,"text":"오프라인 모드는 정식 출시가 아니라 동기화 충돌을 실험하는 프로토타입만 진행합니다."}],"summaries":[{"summary_index":0,"summary_units":[{"unit_text":"영업팀은 관리자 리포트를 요구한다."},{"unit_text":"지원팀은 안정성 개선을 더 급하다고 주장한다."},{"unit_text":"오프라인 모드는 프로토타입만 진행한다."}]}]}]}
+Output: {"segments":[{"sid":"segment_04","summaries":[{"summary_index":0,"summary_units":[{"unit_text":"영업팀은 관리자 리포트를 요구한다.","clue":"061"},{"unit_text":"지원팀은 안정성 개선을 더 급하다고 주장한다.","clue":"064"},{"unit_text":"오프라인 모드는 프로토타입만 진행한다.","clue":"070"}]}]}]}
+""".strip()
