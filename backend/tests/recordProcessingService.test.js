@@ -39,10 +39,20 @@ test("failed status is published only after cleanup releases the active record",
     },
   };
 
-  assert.equal(queueRecordProcessing("race-test", "sample.m4a", dependencies), true);
+  const pipelineSettings = {
+    stt: { preprocessingEnabled: true },
+  };
+
+  assert.equal(
+    queueRecordProcessing("race-test", "sample.m4a", pipelineSettings, dependencies),
+    true
+  );
   await cleanupStarted;
 
-  assert.equal(queueRecordProcessing("race-test", "sample.m4a", dependencies), false);
+  assert.equal(
+    queueRecordProcessing("race-test", "sample.m4a", pipelineSettings, dependencies),
+    false
+  );
 
   releaseCleanup();
   assert.equal(await failed, "AI failed");
@@ -52,6 +62,9 @@ test("failed status is published only after cleanup releases the active record",
     dependencies.completeRecord = () => resolve();
   });
 
-  assert.equal(queueRecordProcessing("race-test", "sample.m4a", dependencies), true);
+  assert.equal(
+    queueRecordProcessing("race-test", "sample.m4a", pipelineSettings, dependencies),
+    true
+  );
   await retryCompleted;
 });

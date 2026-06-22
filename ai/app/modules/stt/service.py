@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
+from functools import partial
 from typing import Callable
 
 from app.core.config import settings
@@ -20,11 +21,29 @@ ProviderTranscribe = Callable[[str | Path], list[dict]]
 
 
 @dataclass(frozen=True)
+class STTRuntimeOptions:
+    provider: str
+    model_name: str
+    device: str
+    compute_type: str
+    chunking_enabled: bool
+    chunk_seconds: float
+    overlap_seconds: float
+    min_duration_seconds: float
+
+
+@dataclass(frozen=True)
 class ChunkingOptions:
     enabled: bool = True
     chunk_seconds: float = 600.0
     overlap_seconds: float = 8.0
     min_duration_seconds: float = 660.0
+    command_timeout_seconds: int = 120
+
+
+@dataclass(frozen=True)
+class PreviewOptions:
+    sample_seconds: float = 90.0
     command_timeout_seconds: int = 120
 
 
@@ -42,7 +61,10 @@ _PROVIDER_MAP: dict[str, ProviderTranscribe] = {
 }
 
 
-def transcribe_audio(audio_path: str | Path) -> list[dict]:
+def transcribe_audio(
+    audio_path: str | Path,
+    runtime_options: STTRuntimeOptions | None = None,
+) -> list[dict]:
     """
     Input:
     audio file path
@@ -56,12 +78,43 @@ def transcribe_audio(audio_path: str | Path) -> list[dict]:
       }
     ]
     """
-    provider_name = settings.stt_provider
-    transcribe = _get_provider(provider_name)
+    provider_name = runtime_options.provider if runtime_options else settings.stt_provider
+    provider = _get_provider(provider_name)
+    transcribe = partial(
+        provider,
+        model_name=runtime_options.model_name if runtime_options else settings.whisper_model,
+        device=runtime_options.device if runtime_options else settings.whisper_device,
+        compute_type=(
+            runtime_options.compute_type
+            if runtime_options and provider_name != "whisper"
+            else None
+        ),
+    )
+    if provider_name == "whisper":
+        transcribe = partial(
+            provider,
+            model_name=runtime_options.model_name if runtime_options else settings.whisper_model,
+            device=runtime_options.device if runtime_options else settings.whisper_device,
+        )
     log_event("stt_provider_selected", provider=provider_name, audio_path=audio_path)
 
     try:
-        stt_output = _transcribe_with_optional_chunking(audio_path, transcribe)
+        chunking_options = (
+            ChunkingOptions(
+                enabled=runtime_options.chunking_enabled,
+                chunk_seconds=runtime_options.chunk_seconds,
+                overlap_seconds=runtime_options.overlap_seconds,
+                min_duration_seconds=runtime_options.min_duration_seconds,
+                command_timeout_seconds=settings.stt_chunk_command_timeout_seconds,
+            )
+            if runtime_options
+            else None
+        )
+        stt_output = _transcribe_with_optional_chunking(
+            audio_path,
+            transcribe,
+            chunking_options,
+        )
         validated_output = validate_stt_output(stt_output)
         result = [item.model_dump() for item in validated_output]
         log_event("stt_validated", items=len(result))
@@ -70,6 +123,62 @@ def transcribe_audio(audio_path: str | Path) -> list[dict]:
         raise
     except Exception as error:
         raise STTProcessingError(f"STT processing failed with provider '{provider_name}': {error}") from error
+
+
+def transcribe_audio_start(
+    audio_path: str | Path,
+    *,
+    sample_seconds: float | None = None,
+) -> list[dict]:
+    """
+    Transcribe only the beginning of a recording.
+
+    This is intended for topic/context discovery before running refinement on the
+    full transcript.
+    """
+
+    provider_name = settings.stt_provider
+    transcribe = _get_provider(provider_name)
+    path = _validate_audio_path(audio_path)
+    options = _preview_options_from_env(sample_seconds)
+    duration_seconds = _get_audio_duration_seconds(path, options.command_timeout_seconds)
+    chunk_duration = options.sample_seconds
+    if duration_seconds is not None:
+        if duration_seconds <= 0:
+            raise STTProcessingError(f"Audio duration must be positive: {path}")
+        chunk_duration = min(options.sample_seconds, duration_seconds)
+
+    log_event(
+        "stt_preview_started",
+        provider=provider_name,
+        audio_path=path,
+        sample_seconds=options.sample_seconds,
+        duration_seconds=duration_seconds,
+        chunk_duration=chunk_duration,
+    )
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="record_moment_stt_preview_") as temp_dir:
+            preview_path = Path(temp_dir) / "preview.wav"
+            _write_audio_chunk(
+                path,
+                preview_path,
+                start_time=0.0,
+                chunk_duration=chunk_duration,
+                timeout_seconds=options.command_timeout_seconds,
+            )
+            preview_output = transcribe(preview_path)
+
+        validated_output = validate_stt_output(preview_output)
+        result = [item.model_dump() for item in validated_output]
+        log_event("stt_preview_completed", items=len(result))
+        return result
+    except STTProcessingError:
+        raise
+    except Exception as error:
+        raise STTProcessingError(
+            f"STT preview failed with provider '{provider_name}': {error}"
+        ) from error
 
 
 def _get_provider(provider_name: str) -> ProviderTranscribe:
@@ -87,9 +196,10 @@ def _get_provider(provider_name: str) -> ProviderTranscribe:
 def _transcribe_with_optional_chunking(
     audio_path: str | Path,
     transcribe: ProviderTranscribe,
+    runtime_options: ChunkingOptions | None = None,
 ) -> list[dict]:
     path = _validate_audio_path(audio_path)
-    options = _chunking_options_from_env()
+    options = runtime_options or _chunking_options_from_env()
 
     if not options.enabled:
         log_event("stt_chunking_skipped", reason="disabled")
@@ -376,6 +486,25 @@ def _chunking_options_from_env() -> ChunkingOptions:
         command_timeout_seconds=max(
             10,
             _env_int("STT_CHUNK_COMMAND_TIMEOUT_SECONDS", ChunkingOptions.command_timeout_seconds),
+        ),
+    )
+
+
+def _preview_options_from_env(sample_seconds: float | None) -> PreviewOptions:
+    configured_sample_seconds = (
+        sample_seconds
+        if sample_seconds is not None
+        else _env_float("STT_CONTEXT_SAMPLE_SECONDS", PreviewOptions.sample_seconds)
+    )
+
+    return PreviewOptions(
+        sample_seconds=max(5.0, configured_sample_seconds),
+        command_timeout_seconds=max(
+            10,
+            _env_int(
+                "STT_CONTEXT_COMMAND_TIMEOUT_SECONDS",
+                PreviewOptions.command_timeout_seconds,
+            ),
         ),
     )
 

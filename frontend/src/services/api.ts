@@ -1,4 +1,8 @@
 import type { Recording, RecordingFolder, Segment } from '../types/finalResult'
+import type {
+  PipelineSettings,
+  ProcessingOptions,
+} from '../types/pipelineSettings'
 
 type ApiResponse<T> = {
   success: boolean
@@ -36,9 +40,14 @@ export async function fetchBootstrap() {
   }
 }
 
-export async function uploadRecording(file: File) {
+export function fetchProcessingOptions() {
+  return request<ProcessingOptions>('/records/processing-options')
+}
+
+export async function uploadRecording(file: File, pipelineSettings: PipelineSettings) {
   const formData = new FormData()
   formData.append('file', file)
+  formData.append('pipelineSettings', JSON.stringify(pipelineSettings))
 
   const payload = await request<RecordDetailPayload>('/records', {
     method: 'POST',

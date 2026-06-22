@@ -167,7 +167,12 @@ MAP_UNITS_SCHEMA: dict[str, Any] = {
 }
 
 
-def add_reasoning(structured_segments: list[dict]) -> list[dict]:
+def add_reasoning(
+    structured_segments: list[dict],
+    *,
+    llm_client=default_llm_client,
+    max_output_tokens: int | None = None,
+) -> list[dict]:
     """
     Structured Segments에 clues 필드를 추가해 Final Result를 생성한다.
 
@@ -178,19 +183,39 @@ def add_reasoning(structured_segments: list[dict]) -> list[dict]:
     if not segments:
         return []
 
+    token_limit = (
+        max_output_tokens or settings.llm_reasoning_max_output_tokens
+    )
+
     if REASONING_MODE == "single":
-        return _add_reasoning_single(segments)
-    return _add_reasoning_units(segments)
+        return _add_reasoning_single(
+            segments,
+            llm_client=llm_client,
+            max_output_tokens=token_limit,
+        )
+
+    return _add_reasoning_units(
+        segments,
+        llm_client=llm_client,
+        max_output_tokens=token_limit,
+    )
 
 
-def _add_reasoning_single(segments: list[dict]) -> list[dict]:
+def _add_reasoning_single(
+    segments: list[dict],
+    *,
+    llm_client=default_llm_client,
+    max_output_tokens: int | None = None,
+) -> list[dict]:
     """구방식: 단일 LLM 호출로 summary별 clue를 생성한다."""
-    raw_clue_result = default_llm_client.generate_json(
+    raw_clue_result = llm_client.generate_json(
         system_prompt=REASONING_SYSTEM_PROMPT,
         user_payload=_build_reasoning_input(segments),
         schema=REASONING_CLUES_SCHEMA,
         schema_name="reasoning_clues",
-        max_output_tokens=settings.llm_reasoning_max_output_tokens,
+        max_output_tokens=(
+            max_output_tokens or settings.llm_reasoning_max_output_tokens
+        ),
     )
 
     clues_by_sid = _normalize_clues(raw_clue_result, segments)
