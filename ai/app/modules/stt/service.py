@@ -41,6 +41,12 @@ class ChunkingOptions:
     command_timeout_seconds: int = 120
 
 
+@dataclass(frozen=True)
+class PreviewOptions:
+    sample_seconds: float = 90.0
+    command_timeout_seconds: int = 120
+
+
 class _ChunkingError(Exception):
     pass
 
@@ -117,6 +123,62 @@ def transcribe_audio(
         raise
     except Exception as error:
         raise STTProcessingError(f"STT processing failed with provider '{provider_name}': {error}") from error
+
+
+def transcribe_audio_start(
+    audio_path: str | Path,
+    *,
+    sample_seconds: float | None = None,
+) -> list[dict]:
+    """
+    Transcribe only the beginning of a recording.
+
+    This is intended for topic/context discovery before running refinement on the
+    full transcript.
+    """
+
+    provider_name = settings.stt_provider
+    transcribe = _get_provider(provider_name)
+    path = _validate_audio_path(audio_path)
+    options = _preview_options_from_env(sample_seconds)
+    duration_seconds = _get_audio_duration_seconds(path, options.command_timeout_seconds)
+    chunk_duration = options.sample_seconds
+    if duration_seconds is not None:
+        if duration_seconds <= 0:
+            raise STTProcessingError(f"Audio duration must be positive: {path}")
+        chunk_duration = min(options.sample_seconds, duration_seconds)
+
+    log_event(
+        "stt_preview_started",
+        provider=provider_name,
+        audio_path=path,
+        sample_seconds=options.sample_seconds,
+        duration_seconds=duration_seconds,
+        chunk_duration=chunk_duration,
+    )
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="record_moment_stt_preview_") as temp_dir:
+            preview_path = Path(temp_dir) / "preview.wav"
+            _write_audio_chunk(
+                path,
+                preview_path,
+                start_time=0.0,
+                chunk_duration=chunk_duration,
+                timeout_seconds=options.command_timeout_seconds,
+            )
+            preview_output = transcribe(preview_path)
+
+        validated_output = validate_stt_output(preview_output)
+        result = [item.model_dump() for item in validated_output]
+        log_event("stt_preview_completed", items=len(result))
+        return result
+    except STTProcessingError:
+        raise
+    except Exception as error:
+        raise STTProcessingError(
+            f"STT preview failed with provider '{provider_name}': {error}"
+        ) from error
 
 
 def _get_provider(provider_name: str) -> ProviderTranscribe:
@@ -424,6 +486,25 @@ def _chunking_options_from_env() -> ChunkingOptions:
         command_timeout_seconds=max(
             10,
             _env_int("STT_CHUNK_COMMAND_TIMEOUT_SECONDS", ChunkingOptions.command_timeout_seconds),
+        ),
+    )
+
+
+def _preview_options_from_env(sample_seconds: float | None) -> PreviewOptions:
+    configured_sample_seconds = (
+        sample_seconds
+        if sample_seconds is not None
+        else _env_float("STT_CONTEXT_SAMPLE_SECONDS", PreviewOptions.sample_seconds)
+    )
+
+    return PreviewOptions(
+        sample_seconds=max(5.0, configured_sample_seconds),
+        command_timeout_seconds=max(
+            10,
+            _env_int(
+                "STT_CONTEXT_COMMAND_TIMEOUT_SECONDS",
+                PreviewOptions.command_timeout_seconds,
+            ),
         ),
     )
 
