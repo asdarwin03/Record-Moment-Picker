@@ -3,12 +3,18 @@ from app.core.config import settings
 from app.clients.llm_client import default_llm_client, load_shared_schema
 from app.schemas.refined_text import validate_refined_text_output
 from app.schemas.segment import validate_structured_segments
-from app.modules.segmenting.prompt import SEGMENT_TEXT_SYSTEM_PROMPT, MERGE_SEGMENTS_SYSTEM_PROMPT
+from app.modules.segmenting.prompt import (
+    SEGMENT_TEXT_SYSTEM_PROMPT,
+    MERGE_SEGMENTS_SYSTEM_PROMPT,
+    EVALUATE_MERGE_SYSTEM_PROMPT,
+)
 
 
 OVERLAP_SIZE = 15
 CHUNK_DURATION = settings.llm_segment_chunk_seconds
 SEGMENT_CONTENT_KEYS = {"start_time", "end_time", "title", "summary", "texts", "important"}
+MERGE_PASS_THRESHOLD = 0.6
+EVALUATION_REQUIRED_KEYS = {"topic_coherence_score", "boundary_accuracy_score", "overall_score", "feedback"}
 
 
 def segment_text(refined_text: list[dict]) -> list[dict]:
@@ -91,8 +97,8 @@ def segment_text(refined_text: list[dict]) -> list[dict]:
                 "current_segment_summary": result[-1]["summary"]
             }
 
-    # 6. 경계 세그먼트 병합
-    merged_boundaries = _merge_boundaries(chunk_results)
+    # 6. 경계 세그먼트 병합 + 평가 (순차 처리, 재병합 결과가 다음 경계에 반영됨)
+    merged_boundaries = _merge_boundaries_with_evaluation(chunk_results)
 
     # 7. 전체 세그먼트 조립
     segments = _assemble_segments(chunk_results, merged_boundaries)
@@ -268,9 +274,13 @@ def _split_into_chunks(refined_items: list[dict]) -> list[list[dict]]:
     return chunks
 
 
-# ── 경계 세그먼트 병합 ──────────────────────────────────
+# ── 경계 세그먼트 병합 + 평가 ────────────────────────────
 
-def _merge_boundaries(chunk_results: list[list[dict]]) -> list[list[dict]]:
+def _merge_boundaries_with_evaluation(chunk_results: list[list[dict]]) -> list[list[dict]]:
+    """
+    각 경계를 순차적으로 병합 → 평가 → 필요시 1회 재병합한다.
+    재병합 결과는 chunk_results[i+1]에 반영되어 다음 경계 처리에 영향을 준다.
+    """
     merged_boundaries = []
 
     for i in range(len(chunk_results) - 1):
@@ -282,24 +292,135 @@ def _merge_boundaries(chunk_results: list[list[dict]]) -> list[list[dict]]:
         segment_a = chunk_results[i][-1]
         segment_b = chunk_results[i + 1][0]
 
-        try:
-            merged = default_llm_client.generate_json(
-                system_prompt=MERGE_SEGMENTS_SYSTEM_PROMPT,
-                user_payload={
-                    "segment_a": segment_a,
-                    "segment_b": segment_b,
-                },
-                schema=load_shared_schema("structured-segments.schema.json"),
-                schema_name="merged_segments",
-                max_output_tokens=settings.llm_merge_max_output_tokens,
+        # 1차 병합
+        merged = _call_merge_llm(segment_a, segment_b, feedback=None, evaluation=None)
+
+        # 평가
+        evaluation = _call_evaluate_merge_llm(chunk_results[i], chunk_results[i + 1], merged)
+
+        # 평가 결과 fail이면 1회 재병합 (점수 + 기준 함께 전달)
+        if evaluation["overall_score"] < MERGE_PASS_THRESHOLD:
+            feedback = evaluation.get("feedback") or (
+                "이전 시도에서 점수가 기준(0.6)보다 낮았습니다. "
+                "segment_a와 segment_b의 texts를 다시 처음부터 검토하여 "
+                "올바른 주제 경계를 찾아 다시 병합/분할하세요."
             )
-            merged = _coerce_segment_list(merged, f"merged boundary {i} / {i + 1}")
-        except Exception as e:
-            raise PipelineError(f"경계 세그먼트 병합 실패 (chunk {i} / {i + 1}): {e}")
+            merged = _call_merge_llm(
+                segment_a, segment_b,
+                feedback=feedback,
+                evaluation=evaluation
+            )
+            merged = _validate_merge_length(merged, i, i + 1)
+
+        # 재병합 결과를 다음 경계 처리에 반영
+        chunk_results[i + 1] = _apply_merge_to_next_chunk(chunk_results[i + 1], merged)
 
         merged_boundaries.append(merged)
 
     return merged_boundaries
+
+
+def _validate_merge_length(merged: list[dict], i: int, j: int) -> list[dict]:
+    if len(merged) > 2:
+        raise PipelineError(
+            f"경계 병합 결과가 예상보다 많습니다 (chunk {i} / {j}): "
+            f"{len(merged)}개 세그먼트 반환됨 (최대 2개 예상)."
+        )
+    if len(merged) == 0:
+        raise PipelineError(
+            f"경계 병합 결과가 비어 있습니다 (chunk {i} / {j})."
+        )
+    return merged
+
+
+def _call_merge_llm(
+    segment_a: dict,
+    segment_b: dict,
+    feedback: str | None,
+    evaluation: dict | None = None
+) -> list[dict]:
+    system_prompt = MERGE_SEGMENTS_SYSTEM_PROMPT
+
+    if feedback and evaluation:
+        system_prompt += (
+            f"\n\n## Previous Attempt Feedback"
+            f"\nYour previous merge attempt was evaluated and scored as follows:"
+            f"\n- topic_coherence_score: {evaluation['topic_coherence_score']}"
+            f"\n- boundary_accuracy_score: {evaluation['boundary_accuracy_score']}"
+            f"\n- overall_score: {evaluation['overall_score']} (threshold: {MERGE_PASS_THRESHOLD})"
+            f"\n\nScoring reference:"
+            f"\n- 1.0 means perfectly correct."
+            f"\n- 0.6 means minor imperfections only (slightly off boundary), still acceptable."
+            f"\n- 0.2 means a clear structural error (wrong topic grouping or boundary)."
+            f"\n- 0.0 means the result makes no sense at all."
+            f"\n\nSpecific issue identified:"
+            f"\n{feedback}"
+            f"\n\nFix this issue in your new attempt."
+        )
+
+    try:
+        merged = default_llm_client.generate_json(
+            system_prompt=system_prompt,
+            user_payload={
+                "segment_a": segment_a,
+                "segment_b": segment_b,
+            },
+            schema=load_shared_schema("structured-segments.schema.json"),
+            schema_name="merged_segments",
+            max_output_tokens=settings.llm_merge_max_output_tokens,
+        )
+        merged = _coerce_segment_list(merged, "merged boundary")
+    except Exception as e:
+        raise PipelineError(f"경계 세그먼트 병합 실패: {e}")
+
+    return _validate_merge_length(merged, -1, -1)
+
+
+def _call_evaluate_merge_llm(
+    chunk_a_segments: list[dict],
+    chunk_b_segments: list[dict],
+    merged_result: list[dict]
+) -> dict:
+    try:
+        evaluation = default_llm_client.generate_json(
+            system_prompt=EVALUATE_MERGE_SYSTEM_PROMPT,
+            user_payload={
+                "chunk_a_segments": chunk_a_segments,
+                "chunk_b_segments": chunk_b_segments,
+                "merged_result": merged_result,
+            },
+            schema=None,
+            schema_name="merge_evaluation",
+            max_output_tokens=2048,
+        )
+    except Exception as e:
+        raise PipelineError(f"경계 병합 평가 실패: {e}")
+
+    if not isinstance(evaluation, dict) or not EVALUATION_REQUIRED_KEYS.issubset(evaluation.keys()):
+        missing = EVALUATION_REQUIRED_KEYS - set(evaluation.keys()) if isinstance(evaluation, dict) else EVALUATION_REQUIRED_KEYS
+        raise PipelineError(
+            f"평가 결과 형식이 올바르지 않습니다. 누락된 필드: {missing}, 원본: {evaluation}"
+        )
+
+    return evaluation
+
+
+def _apply_merge_to_next_chunk(
+    chunk_result: list[dict],
+    merged: list[dict]
+) -> list[dict]:
+    """
+    병합/재병합 결과 중 chunk_b 쪽에 해당하는 부분으로 chunk_result의 첫 세그먼트를 교체한다.
+    merged가 1개 세그먼트면 다음 청크의 첫 세그먼트는 이미 병합에 흡수된 것이므로 제거하고,
+    merged가 2개면 마지막 세그먼트를 다음 청크의 새로운 첫 세그먼트로 교체한다.
+    """
+    if not merged:
+        return chunk_result
+
+    remaining = chunk_result[1:]
+    new_first_segment = merged[-1]
+
+    return [new_first_segment] + remaining
 
 
 # ── 전체 세그먼트 조립 ──────────────────────────────────
@@ -416,6 +537,7 @@ def _validate_output(segments: list[dict], refined_items: list[dict]) -> list[di
         )
 
     return segment_dicts
+
 
 def _normalize_segment_boundaries(segments: list[dict]) -> list[dict]:
     normalized_segments = [dict(segment) for segment in segments]
@@ -581,5 +703,3 @@ def _find_best_segment_for_utterance(segments: list[dict], utterance: dict) -> d
         return (distance, end_time - start_time)
 
     return min(segments, key=score)
-        
-# TODO(segmenting 담당): refined text 입력을 검증하고, segmenting.prompt로 llm_client를 호출한 뒤, structured segments를 검증해서 list[dict]로 반환하기.

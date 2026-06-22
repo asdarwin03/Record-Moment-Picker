@@ -260,4 +260,71 @@ Step 3: Apply the following rules:
 ]
 """.strip()
 
+EVALUATE_MERGE_SYSTEM_PROMPT = """
+You are a strict evaluator for a transcript segmentation pipeline.
+
+You will receive:
+- "chunk_a_segments": all segments from chunk N (the LLM's full segmenting output)
+- "chunk_b_segments": all segments from chunk N+1 (the LLM's full segmenting output)
+- "merged_result": the segment(s) produced by merging the boundary segments
+  (the last segment of chunk_a_segments and the first segment of chunk_b_segments)
+
+Your job is to evaluate whether the merge was done correctly,
+using chunk_a_segments and chunk_b_segments as the ground truth reference.
+
+## Input
+A JSON object with:
+- "chunk_a_segments": array of segment objects
+- "chunk_b_segments": array of segment objects
+- "merged_result": array of segment objects
+
+## Output
+Return ONLY a valid JSON object. No explanation, no markdown fences.
+
+## Scoring Criteria
+Score each dimension from 0.0 to 1.0, in increments of 0.2 (0.0, 0.2, 0.4, 0.6, 0.8, 1.0).
+
+### topic_coherence_score
+How well does the merged_result reflect a single coherent topic (if merged into 1)
+or correctly separated topics (if kept as 2 or split)?
+- 1.0: The topic grouping in merged_result perfectly matches what the actual texts discuss.
+- 0.6: The topic grouping is mostly correct, but a few utterances feel slightly misplaced or the boundary is a bit off in terms of topic flow.
+- 0.2: The topic grouping is clearly wrong — utterances from clearly different topics are merged together, or one continuous topic is incorrectly split.
+- 0.0: The result makes no topical sense at all.
+
+### boundary_accuracy_score
+Is the segment boundary placed at the correct utterance?
+- 1.0: The boundary (or absence of a boundary, if merged into 1) is at exactly the right utterance where the topic shifts.
+- 0.6: The boundary is close to correct but off by a few utterances.
+- 0.2: The boundary is clearly in the wrong place, well before or after the actual topic shift.
+- 0.0: There is no recognizable correct boundary in the result.
+
+### overall_score
+The average of the two scores above, rounded to the nearest 0.2.
+
+## Pass/Fail Threshold
+- overall_score >= 0.6 → PASS (the merge is acceptable, no retry needed)
+- overall_score < 0.6 → FAIL (the merge needs to be redone)
+
+This 0.6 threshold means: the merge can have minor imperfections (slightly off boundary)
+but must not have major structural problems
+(wrong topic grouping or completely wrong boundary placement).
+
+## Feedback
+If overall_score < 0.6, provide concise, actionable feedback in Korean explaining:
+- Which score(s) were low and why
+- Specifically which utterance (by t_id) or topic boundary was handled incorrectly
+- What the correct boundary or grouping should be, based on the actual texts
+
+If overall_score >= 0.6, return an empty string for feedback.
+
+## Output Schema
+{
+  "topic_coherence_score": 0.8,
+  "boundary_accuracy_score": 0.6,
+  "overall_score": 0.7,
+  "feedback": "segment_a와 segment_b가 다른 주제인데 하나로 합쳐짐. t_id 113번부터 새로운 주제(PagedAttention 메모리 효율)가 시작되므로 113번을 기준으로 재분할해야 함."
+}
+""".strip()
+
 # TODO(segmenting 담당): 실제 녹음 유형에 맞게 segment 길이와 important 선정 기준을 조정하기.
