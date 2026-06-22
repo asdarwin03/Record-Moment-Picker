@@ -7,11 +7,17 @@ from app.modules.segmenting.prompt import SEGMENT_TEXT_SYSTEM_PROMPT, MERGE_SEGM
 
 
 OVERLAP_SIZE = 15
-CHUNK_DURATION = settings.llm_segment_chunk_seconds
 SEGMENT_CONTENT_KEYS = {"start_time", "end_time", "title", "summary", "texts", "important"}
 
 
-def segment_text(refined_text: list[dict]) -> list[dict]:
+def segment_text(
+    refined_text: list[dict],
+    *,
+    llm_client=default_llm_client,
+    chunk_seconds: int | None = None,
+    max_output_tokens: int | None = None,
+    merge_max_output_tokens: int | None = None,
+) -> list[dict]:
     """
     Input:
     [
@@ -49,7 +55,10 @@ def segment_text(refined_text: list[dict]) -> list[dict]:
     refined_items = _assign_t_ids(refined_items)
 
     # 3. 청크 분할
-    chunks = _split_into_chunks(refined_items)
+    chunks = _split_into_chunks(
+        refined_items,
+        chunk_seconds or settings.llm_segment_chunk_seconds,
+    )
     total_chunks = len(chunks)
 
     # 4. 청크가 1개면 바로 LLM 호출 후 반환
@@ -58,7 +67,9 @@ def segment_text(refined_text: list[dict]) -> list[dict]:
             chunk=chunks[0],
             previous_summary=None,
             chunk_index=0,
-            total_chunks=1
+            total_chunks=1,
+            llm_client=llm_client,
+            max_output_tokens=max_output_tokens or settings.llm_segment_max_output_tokens,
         )
         segments = _post_process(segments, refined_items)
         segments = _assign_sids(segments)
@@ -73,7 +84,9 @@ def segment_text(refined_text: list[dict]) -> list[dict]:
             chunk=chunk,
             previous_summary=previous_summary,
             chunk_index=i,
-            total_chunks=total_chunks
+            total_chunks=total_chunks,
+            llm_client=llm_client,
+            max_output_tokens=max_output_tokens or settings.llm_segment_max_output_tokens,
         )
 
         # 오버랩 발화 제거 (첫 번째 청크 제외)
@@ -92,7 +105,13 @@ def segment_text(refined_text: list[dict]) -> list[dict]:
             }
 
     # 6. 경계 세그먼트 병합
-    merged_boundaries = _merge_boundaries(chunk_results)
+    merged_boundaries = _merge_boundaries(
+        chunk_results,
+        llm_client=llm_client,
+        max_output_tokens=(
+            merge_max_output_tokens or settings.llm_merge_max_output_tokens
+        ),
+    )
 
     # 7. 전체 세그먼트 조립
     segments = _assemble_segments(chunk_results, merged_boundaries)
@@ -113,7 +132,9 @@ def _call_segment_llm(
     chunk: list[dict],
     previous_summary: dict | None,
     chunk_index: int,
-    total_chunks: int
+    total_chunks: int,
+    llm_client,
+    max_output_tokens: int,
 ) -> list[dict]:
     system_prompt = SEGMENT_TEXT_SYSTEM_PROMPT
 
@@ -135,12 +156,12 @@ def _call_segment_llm(
         )
 
     try:
-        raw_result = default_llm_client.generate_json(
+        raw_result = llm_client.generate_json(
             system_prompt=system_prompt,
             user_payload={"items": chunk},
             schema=load_shared_schema("structured-segments.schema.json"),
             schema_name="structured_segments",
-            max_output_tokens=settings.llm_segment_max_output_tokens,
+            max_output_tokens=max_output_tokens,
         )
         return _coerce_segment_list(raw_result, f"chunk {chunk_index} segmenting result")
     except Exception as e:
@@ -243,7 +264,11 @@ def _assign_t_ids(refined_items: list[dict]) -> list[dict]:
 
 # ── 청크 분할 ──────────────────────────────────────────
 
-def _split_into_chunks(refined_items: list[dict]) -> list[list[dict]]:
+def _split_into_chunks(
+    refined_items: list[dict],
+    chunk_duration: int | None = None,
+) -> list[list[dict]]:
+    chunk_duration = chunk_duration or settings.llm_segment_chunk_seconds
     chunks = []
     start = 0
 
@@ -251,7 +276,7 @@ def _split_into_chunks(refined_items: list[dict]) -> list[list[dict]]:
         end = start
         while end < len(refined_items):
             duration = refined_items[end]["start_time"] - refined_items[start]["start_time"]
-            if duration >= CHUNK_DURATION:
+            if duration >= chunk_duration:
                 break
             end += 1
 
@@ -270,7 +295,12 @@ def _split_into_chunks(refined_items: list[dict]) -> list[list[dict]]:
 
 # ── 경계 세그먼트 병합 ──────────────────────────────────
 
-def _merge_boundaries(chunk_results: list[list[dict]]) -> list[list[dict]]:
+def _merge_boundaries(
+    chunk_results: list[list[dict]],
+    *,
+    llm_client=default_llm_client,
+    max_output_tokens: int | None = None,
+) -> list[list[dict]]:
     merged_boundaries = []
 
     for i in range(len(chunk_results) - 1):
@@ -283,7 +313,7 @@ def _merge_boundaries(chunk_results: list[list[dict]]) -> list[list[dict]]:
         segment_b = chunk_results[i + 1][0]
 
         try:
-            merged = default_llm_client.generate_json(
+            merged = llm_client.generate_json(
                 system_prompt=MERGE_SEGMENTS_SYSTEM_PROMPT,
                 user_payload={
                     "segment_a": segment_a,
@@ -291,7 +321,9 @@ def _merge_boundaries(chunk_results: list[list[dict]]) -> list[list[dict]]:
                 },
                 schema=load_shared_schema("structured-segments.schema.json"),
                 schema_name="merged_segments",
-                max_output_tokens=settings.llm_merge_max_output_tokens,
+                max_output_tokens=(
+                    max_output_tokens or settings.llm_merge_max_output_tokens
+                ),
             )
             merged = _coerce_segment_list(merged, f"merged boundary {i} / {i + 1}")
         except Exception as e:

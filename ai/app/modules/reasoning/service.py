@@ -70,7 +70,12 @@ REASONING_CLUES_SCHEMA: dict[str, Any] = {
 }
 
 
-def add_reasoning(structured_segments: list[dict]) -> list[dict]:
+def add_reasoning(
+    structured_segments: list[dict],
+    *,
+    llm_client=default_llm_client,
+    max_output_tokens: int | None = None,
+) -> list[dict]:
     """
     Structured Segments에 clues 필드를 추가해 Final Result를 생성한다.
 
@@ -82,12 +87,12 @@ def add_reasoning(structured_segments: list[dict]) -> list[dict]:
     if not segments:
         return []
 
-    raw_clue_result = default_llm_client.generate_json(
+    raw_clue_result = llm_client.generate_json(
         system_prompt=REASONING_SYSTEM_PROMPT,
         user_payload=_build_reasoning_input(segments),
         schema=REASONING_CLUES_SCHEMA,
         schema_name="reasoning_clues",
-        max_output_tokens=settings.llm_reasoning_max_output_tokens,
+        max_output_tokens=max_output_tokens or settings.llm_reasoning_max_output_tokens,
     )
 
     clues_by_sid = _normalize_clues(raw_clue_result, segments)

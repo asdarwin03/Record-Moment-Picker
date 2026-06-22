@@ -5,8 +5,9 @@ python-multipart
 python-dotenv
 pytest
 
-# Optional STT providers.
-# Install only the provider selected by STT_PROVIDER.
-# openai-whisper
+# STT provider selected by the default STT_PROVIDER=whisper configuration.
+openai-whisper
+
+# Alternative optional STT providers.
 # whisperx
 # faster-whisper

@@ -23,7 +23,7 @@ type RecordingListPanelProps = {
   sortDirection: RecordingSortDirection
   totalVisibleCount: number
   onAddFolder: () => void
-  onAddRecordingFile: (file: File) => void
+  onOpenAddRecording: () => void
   onDeleteFolder: () => void
   onDropRecordingToFolder: (recordingId: string, folderId?: string) => void
   onRemoveChecked: () => void
@@ -50,7 +50,7 @@ export function RecordingListPanel({
   sortDirection,
   totalVisibleCount,
   onAddFolder,
-  onAddRecordingFile,
+  onOpenAddRecording,
   onApplySearch,
   onDeleteFolder,
   onDraftSearchQueryChange,
@@ -135,24 +135,14 @@ export function RecordingListPanel({
       </div>
 
       <div className="recording-actions">
-        <label className={classNames('recording-add-button', isUploading && 'disabled')}>
-          <input
-            className="audio-file-input"
-            type="file"
-            accept="audio/*"
-            disabled={isUploading}
-            onChange={(event) => {
-              const file = event.target.files?.[0]
-
-              if (file) {
-                onAddRecordingFile(file)
-              }
-
-              event.target.value = ''
-            }}
-          />
+        <button
+          className="recording-add-button"
+          type="button"
+          disabled={isUploading}
+          onClick={onOpenAddRecording}
+        >
           {isUploading ? '분석 중' : '추가'}
-        </label>
+        </button>
         <button
           type="button"
           onClick={onRemoveChecked}

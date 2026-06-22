@@ -9,7 +9,13 @@ const mockUserId = 1;
 
 seedDemoRecordsIfNeeded();
 
-export function createRecord({ userId, originalFilename, storedFilename, filePath }) {
+export function createRecord({
+  userId,
+  originalFilename,
+  storedFilename,
+  filePath,
+  pipelineSettings,
+}) {
   const state = getDataState();
   const now = new Date().toISOString();
   const record = {
@@ -20,6 +26,7 @@ export function createRecord({ userId, originalFilename, storedFilename, filePat
     original_filename: originalFilename,
     stored_filename: storedFilename,
     file_path: filePath,
+    pipeline_settings: pipelineSettings,
     status: "uploaded",
     result: null,
     error_message: null,
@@ -205,6 +212,7 @@ export function prepareRecordRetry(recordId, userId) {
   return {
     record_id: record.record_id,
     file_path: record.file_path,
+    pipeline_settings: record.pipeline_settings,
     detail: toRecordDetail(record),
   };
 }
@@ -266,6 +274,7 @@ function toRecordDetail(record) {
     segments: record.result || [],
     recording: toFrontendRecording(record),
     error_message: record.error_message,
+    pipeline_settings: record.pipeline_settings,
   };
 }
 
@@ -277,6 +286,7 @@ function toFrontendRecording(record) {
     status: toFrontendStatus(record.status),
     segments: record.result || [],
     error_message: record.error_message,
+    pipelineSettings: record.pipeline_settings,
   };
 
   const audioUrl = getPublicUploadUrl(record.stored_filename);

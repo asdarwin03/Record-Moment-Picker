@@ -5,13 +5,18 @@ import time
 import traceback
 from typing import Any
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.exceptions import AIServiceError, PipelineError, SchemaValidationError
+from app.core.pipeline_settings import (
+    PipelineSettings,
+    default_pipeline_settings,
+    processing_options,
+)
 from app.core.tracing import configure_logging, log_event, new_request_id, request_context, track_stage
 from app.modules.reasoning.service import add_reasoning
 from app.modules.refine_text.service import refine_text
@@ -55,11 +60,24 @@ async def health_check():
     return {"status": "ok"}
 
 
+@app.get("/processing-options")
+async def get_processing_options():
+    return {
+        "status": "success",
+        "data": processing_options(),
+        "message": None,
+    }
+
+
 @app.post("/process-audio")
-async def process_audio(file: UploadFile = File(...)):
+async def process_audio(
+    file: UploadFile = File(...),
+    pipeline_settings: str | None = Form(None),
+):
     request_id = new_request_id()
     started_at = time.perf_counter()
     audio_content = await file.read()
+    runtime_settings = _parse_pipeline_settings(pipeline_settings)
 
     with request_context(request_id):
         log_event(
@@ -69,6 +87,10 @@ async def process_audio(file: UploadFile = File(...)):
             size_bytes=len(audio_content),
             size_mb=len(audio_content) / 1024 / 1024,
             pipeline_mode=settings.ai_pipeline_mode,
+            stt_model=runtime_settings.stt.model,
+            refine_model=runtime_settings.refine.model,
+            segmenting_model=runtime_settings.segmenting.model,
+            reasoning_model=runtime_settings.reasoning.model,
         )
 
         if len(audio_content) > settings.max_audio_upload_bytes:
@@ -106,7 +128,11 @@ async def process_audio(file: UploadFile = File(...)):
         log_event("process_audio_saved_temp", temp_path=temp_path)
 
         try:
-            final_json = await run_in_threadpool(run_pipeline, temp_path)
+            final_json = await run_in_threadpool(
+                run_pipeline,
+                temp_path,
+                runtime_settings,
+            )
             with track_stage("final_validation", input_segments=len(final_json)):
                 final_json = _ensure_final_result(final_json)
         except Exception as error:
@@ -193,6 +219,19 @@ def _ensure_stage_result(result: Any, stage: str) -> list[dict[str, Any]]:
     if not isinstance(result, list):
         raise PipelineError(f"{stage} stage is not implemented yet.")
     return result
+
+
+def _parse_pipeline_settings(raw_settings: str | None) -> PipelineSettings:
+    if not isinstance(raw_settings, str) or not raw_settings:
+        return default_pipeline_settings()
+
+    try:
+        return PipelineSettings.model_validate_json(raw_settings)
+    except Exception as error:
+        raise SchemaValidationError(
+            "Pipeline settings validation failed.",
+            details={"reason": str(error)},
+        ) from error
 
 
 def _ensure_final_result(result: Any) -> list[dict[str, Any]]:

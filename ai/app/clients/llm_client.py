@@ -30,6 +30,8 @@ class LLMClientConfig:
     base_url: str = "https://api.openai.com/v1"
     timeout_seconds: int = 60
     max_retries: int = 2
+    temperature: float = 0.0
+    refine_max_output_tokens: int = 4096
 
     @classmethod
     def from_env(cls) -> "LLMClientConfig":
@@ -39,6 +41,8 @@ class LLMClientConfig:
             base_url=settings.openai_base_url,
             timeout_seconds=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
+            temperature=settings.llm_temperature,
+            refine_max_output_tokens=settings.llm_refine_max_output_tokens,
         )
 
 
@@ -69,6 +73,7 @@ class LLMClient:
             "max_output_tokens": max_output_tokens,
             "store": False,
         }
+        payload["temperature"] = self.config.temperature
 
         if response_schema is not None:
             payload["text"] = {
@@ -101,6 +106,7 @@ class LLMClient:
             ],
             "max_output_tokens": max_output_tokens,
             "store": False,
+            "temperature": self.config.temperature,
         }
         return self._create_response(payload)
 
@@ -110,7 +116,7 @@ class LLMClient:
             user_payload={"items": transcript_items},
             schema=load_shared_schema("refined-text.schema.json"),
             schema_name="refined_text",
-            max_output_tokens=settings.llm_refine_max_output_tokens,
+            max_output_tokens=self.config.refine_max_output_tokens,
         )
 
     def segment_text(self, refined_items: list[dict[str, Any]]) -> list[dict[str, Any]]:

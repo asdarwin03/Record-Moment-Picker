@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
+from functools import partial
 from typing import Callable
 
 from app.core.config import settings
@@ -17,6 +18,18 @@ from app.modules.stt.providers import faster_whisper, openai_stt, whisper, whisp
 
 
 ProviderTranscribe = Callable[[str | Path], list[dict]]
+
+
+@dataclass(frozen=True)
+class STTRuntimeOptions:
+    provider: str
+    model_name: str
+    device: str
+    compute_type: str
+    chunking_enabled: bool
+    chunk_seconds: float
+    overlap_seconds: float
+    min_duration_seconds: float
 
 
 @dataclass(frozen=True)
@@ -42,7 +55,10 @@ _PROVIDER_MAP: dict[str, ProviderTranscribe] = {
 }
 
 
-def transcribe_audio(audio_path: str | Path) -> list[dict]:
+def transcribe_audio(
+    audio_path: str | Path,
+    runtime_options: STTRuntimeOptions | None = None,
+) -> list[dict]:
     """
     Input:
     audio file path
@@ -56,12 +72,43 @@ def transcribe_audio(audio_path: str | Path) -> list[dict]:
       }
     ]
     """
-    provider_name = settings.stt_provider
-    transcribe = _get_provider(provider_name)
+    provider_name = runtime_options.provider if runtime_options else settings.stt_provider
+    provider = _get_provider(provider_name)
+    transcribe = partial(
+        provider,
+        model_name=runtime_options.model_name if runtime_options else settings.whisper_model,
+        device=runtime_options.device if runtime_options else settings.whisper_device,
+        compute_type=(
+            runtime_options.compute_type
+            if runtime_options and provider_name != "whisper"
+            else None
+        ),
+    )
+    if provider_name == "whisper":
+        transcribe = partial(
+            provider,
+            model_name=runtime_options.model_name if runtime_options else settings.whisper_model,
+            device=runtime_options.device if runtime_options else settings.whisper_device,
+        )
     log_event("stt_provider_selected", provider=provider_name, audio_path=audio_path)
 
     try:
-        stt_output = _transcribe_with_optional_chunking(audio_path, transcribe)
+        chunking_options = (
+            ChunkingOptions(
+                enabled=runtime_options.chunking_enabled,
+                chunk_seconds=runtime_options.chunk_seconds,
+                overlap_seconds=runtime_options.overlap_seconds,
+                min_duration_seconds=runtime_options.min_duration_seconds,
+                command_timeout_seconds=settings.stt_chunk_command_timeout_seconds,
+            )
+            if runtime_options
+            else None
+        )
+        stt_output = _transcribe_with_optional_chunking(
+            audio_path,
+            transcribe,
+            chunking_options,
+        )
         validated_output = validate_stt_output(stt_output)
         result = [item.model_dump() for item in validated_output]
         log_event("stt_validated", items=len(result))
@@ -87,9 +134,10 @@ def _get_provider(provider_name: str) -> ProviderTranscribe:
 def _transcribe_with_optional_chunking(
     audio_path: str | Path,
     transcribe: ProviderTranscribe,
+    runtime_options: ChunkingOptions | None = None,
 ) -> list[dict]:
     path = _validate_audio_path(audio_path)
-    options = _chunking_options_from_env()
+    options = runtime_options or _chunking_options_from_env()
 
     if not options.enabled:
         log_event("stt_chunking_skipped", reason="disabled")
