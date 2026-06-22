@@ -2,10 +2,11 @@ import axios from "axios";
 import FormData from "form-data";
 import fs from "fs";
 
-export async function requestAudioProcessing(audioPath) {
+export async function requestAudioProcessing(audioPath, pipelineSettings) {
   const aiServerUrl = process.env.AI_SERVER_URL || "http://localhost:8000";
   const form = new FormData();
   form.append("file", fs.createReadStream(audioPath));
+  form.append("pipeline_settings", JSON.stringify(pipelineSettings));
 
   try {
     const response = await axios.post(`${aiServerUrl}/process-audio`, form, {

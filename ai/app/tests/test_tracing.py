@@ -34,7 +34,7 @@ def test_process_audio_logs_upload_and_completion(monkeypatch, caplog):
         }
     ]
 
-    def fake_run_pipeline(audio_path: str):
+    def fake_run_pipeline(audio_path: str, _pipeline_settings):
         assert Path(audio_path).exists()
         return final_result
 
@@ -46,7 +46,8 @@ def test_process_audio_logs_upload_and_completion(monkeypatch, caplog):
             UploadFile(
                 file=BytesIO(b"fake audio"),
                 filename="sample.wav",
-            )
+            ),
+            pipeline_settings=None,
         )
     )
 
@@ -64,17 +65,19 @@ def test_pipeline_logs_stages(monkeypatch, caplog):
     monkeypatch.setattr(
         pipeline,
         "transcribe_audio",
-        lambda _path: [{"start_time": 0, "end_time": 3, "text": "Hello."}],
+        lambda _path, _options: [{"start_time": 0, "end_time": 3, "text": "Hello."}],
     )
     monkeypatch.setattr(
         pipeline,
         "refine_text",
-        lambda _items: [{"t_id": "0001", "start_time": 0, "end_time": 3, "text": "Hello."}],
+        lambda _items, **_options: [
+            {"t_id": "0001", "start_time": 0, "end_time": 3, "text": "Hello."}
+        ],
     )
     monkeypatch.setattr(
         pipeline,
         "segment_text",
-        lambda _items: [
+        lambda _items, **_options: [
             {
                 "sid": "segment_01",
                 "start_time": 0,
@@ -93,7 +96,7 @@ def test_pipeline_logs_stages(monkeypatch, caplog):
             }
         ],
     )
-    monkeypatch.setattr(pipeline, "add_reasoning", lambda items: items)
+    monkeypatch.setattr(pipeline, "add_reasoning", lambda items, **_options: items)
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
     with request_context("req-test"):

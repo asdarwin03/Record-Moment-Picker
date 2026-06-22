@@ -13,7 +13,11 @@ import {
   updateRecord,
 } from "../services/recordService.js";
 import { queueRecordProcessing } from "../services/recordProcessingService.js";
-import { getUploadDir } from "../services/storageService.js";
+import {
+  getProcessingOptions,
+  parsePipelineSettings,
+} from "../services/pipelineSettingsService.js";
+import { getUploadDir, removeStoredFile } from "../services/storageService.js";
 import { authenticate } from "./auth.routes.js";
 
 const router = express.Router();
@@ -60,7 +64,15 @@ router.patch("/bulk/hide", authenticate, (req, res) => {
   });
 });
 
-router.post("/", authenticate, upload.single("file"), (req, res) => {
+router.get("/processing-options", authenticate, (_req, res) => {
+  return res.json({
+    success: true,
+    data: getProcessingOptions(),
+    message: null,
+  });
+});
+
+router.post("/", authenticate, upload.single("file"), (req, res, next) => {
   if (!req.file) {
     return res.status(400).json({
       success: false,
@@ -69,14 +81,23 @@ router.post("/", authenticate, upload.single("file"), (req, res) => {
     });
   }
 
+  let pipelineSettings;
+  try {
+    pipelineSettings = parsePipelineSettings(req.body.pipelineSettings);
+  } catch (error) {
+    removeStoredFile(req.file.path);
+    return next(error);
+  }
+
   const record = createRecord({
     userId: req.user.user_id,
     originalFilename: decodeOriginalFilename(req.file.originalname),
     storedFilename: req.file.filename,
     filePath: req.file.path,
+    pipelineSettings,
   });
 
-  queueRecordProcessing(record.record_id, req.file.path);
+  queueRecordProcessing(record.record_id, req.file.path, pipelineSettings);
 
   return res.status(202).json({
     success: true,
@@ -126,7 +147,11 @@ router.post("/:recordId/retry", authenticate, (req, res, next) => {
       });
     }
 
-    queueRecordProcessing(retryRecord.record_id, retryRecord.file_path);
+    queueRecordProcessing(
+      retryRecord.record_id,
+      retryRecord.file_path,
+      retryRecord.pipeline_settings
+    );
 
     return res.status(202).json({
       success: true,

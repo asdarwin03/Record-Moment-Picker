@@ -820,6 +820,220 @@
   clip: rect(0, 0, 0, 0);
 }
 
+.recording-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.52);
+}
+
+.recording-dialog {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  width: min(1100px, 100%);
+  max-height: min(820px, calc(100vh - 48px));
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+  overflow: hidden;
+}
+
+.recording-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.recording-dialog-head h2 {
+  font-size: 1.05rem;
+}
+
+.recording-dialog-head button {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.45rem;
+}
+
+.recording-dialog-loading {
+  min-height: 240px;
+  padding: 40px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.recording-file-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  margin: 16px 18px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.recording-file-picker span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 750;
+}
+
+.recording-file-picker strong {
+  padding: 7px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 0.82rem;
+}
+
+.recording-file-picker input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.pipeline-stage-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  min-height: 0;
+  padding: 18px;
+  overflow: auto;
+}
+
+.pipeline-stage {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto auto;
+  align-content: start;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.pipeline-stage:not(:last-child)::after {
+  content: "›";
+  position: absolute;
+  top: 52px;
+  right: -13px;
+  z-index: 2;
+  color: var(--muted);
+  font-size: 1.8rem;
+  font-weight: 500;
+}
+
+.pipeline-stage h3 {
+  font-size: 0.95rem;
+  text-align: center;
+}
+
+.pipeline-field {
+  display: grid;
+  gap: 6px;
+}
+
+.pipeline-field span,
+.pipeline-toggle span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.pipeline-field select,
+.pipeline-field input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8fafc;
+  color: var(--ink);
+}
+
+.advanced-toggle {
+  height: 34px;
+  margin-top: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.advanced-toggle[aria-expanded="true"] {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.advanced-fields {
+  display: grid;
+  gap: 11px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.pipeline-toggle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 30px;
+}
+
+.pipeline-toggle input {
+  width: 16px;
+  height: 16px;
+}
+
+.recording-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--line);
+}
+
+.recording-dialog-actions button {
+  min-width: 90px;
+  height: 38px;
+  border: 0;
+  border-radius: 6px;
+  font-weight: 850;
+}
+
+.recording-dialog-actions .secondary {
+  background: #eef2f7;
+  color: var(--ink);
+}
+
+.recording-dialog-actions .primary {
+  background: var(--blue);
+  color: #fff;
+}
+
+.recording-dialog-actions button:disabled {
+  background: #cbd5e1;
+  cursor: not-allowed;
+}
+
 .center-panel {
   display: grid;
   grid-template-rows: auto 1fr;
@@ -1624,6 +1838,22 @@
 @media (max-width: 760px) {
   .rmp-screen {
     padding: 12px;
+  }
+
+  .recording-dialog-backdrop {
+    padding: 10px;
+  }
+
+  .recording-dialog {
+    max-height: calc(100vh - 20px);
+  }
+
+  .pipeline-stage-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pipeline-stage:not(:last-child)::after {
+    content: "";
   }
 
   .transport-bar {

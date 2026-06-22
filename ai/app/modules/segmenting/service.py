@@ -11,13 +11,19 @@ from app.modules.segmenting.prompt import (
 
 
 OVERLAP_SIZE = 15
-CHUNK_DURATION = settings.llm_segment_chunk_seconds
 SEGMENT_CONTENT_KEYS = {"start_time", "end_time", "title", "summary", "texts", "important"}
 MERGE_PASS_THRESHOLD = 0.6
 EVALUATION_REQUIRED_KEYS = {"topic_coherence_score", "boundary_accuracy_score", "overall_score", "feedback"}
 
 
-def segment_text(refined_text: list[dict]) -> list[dict]:
+def segment_text(
+    refined_text: list[dict],
+    *,
+    llm_client=default_llm_client,
+    chunk_seconds: int | None = None,
+    max_output_tokens: int | None = None,
+    merge_max_output_tokens: int | None = None,
+) -> list[dict]:
     """
     Input:
     [
@@ -55,7 +61,10 @@ def segment_text(refined_text: list[dict]) -> list[dict]:
     refined_items = _assign_t_ids(refined_items)
 
     # 3. 청크 분할
-    chunks = _split_into_chunks(refined_items)
+    chunks = _split_into_chunks(
+        refined_items,
+        chunk_seconds or settings.llm_segment_chunk_seconds,
+    )
     total_chunks = len(chunks)
 
     # 4. 청크가 1개면 바로 LLM 호출 후 반환
@@ -64,7 +73,9 @@ def segment_text(refined_text: list[dict]) -> list[dict]:
             chunk=chunks[0],
             previous_summary=None,
             chunk_index=0,
-            total_chunks=1
+            total_chunks=1,
+            llm_client=llm_client,
+            max_output_tokens=max_output_tokens or settings.llm_segment_max_output_tokens,
         )
         segments = _post_process(segments, refined_items)
         segments = _assign_sids(segments)
@@ -79,7 +90,9 @@ def segment_text(refined_text: list[dict]) -> list[dict]:
             chunk=chunk,
             previous_summary=previous_summary,
             chunk_index=i,
-            total_chunks=total_chunks
+            total_chunks=total_chunks,
+            llm_client=llm_client,
+            max_output_tokens=max_output_tokens or settings.llm_segment_max_output_tokens,
         )
 
         # 오버랩 발화 제거 (첫 번째 청크 제외)
@@ -97,8 +110,15 @@ def segment_text(refined_text: list[dict]) -> list[dict]:
                 "current_segment_summary": result[-1]["summary"]
             }
 
+
     # 6. 경계 세그먼트 병합 + 평가 (순차 처리, 재병합 결과가 다음 경계에 반영됨)
-    merged_boundaries = _merge_boundaries_with_evaluation(chunk_results)
+    merged_boundaries = _merge_boundaries_with_evaluation(
+      chunk_results,
+      llm_client=llm_client,
+      max_output_tokens=(merge_max_output_tokens or settings.llm_merge_max_output_tokens
+                        ),
+    )
+
 
     # 7. 전체 세그먼트 조립
     segments = _assemble_segments(chunk_results, merged_boundaries)
@@ -119,7 +139,9 @@ def _call_segment_llm(
     chunk: list[dict],
     previous_summary: dict | None,
     chunk_index: int,
-    total_chunks: int
+    total_chunks: int,
+    llm_client,
+    max_output_tokens: int,
 ) -> list[dict]:
     system_prompt = SEGMENT_TEXT_SYSTEM_PROMPT
 
@@ -141,12 +163,12 @@ def _call_segment_llm(
         )
 
     try:
-        raw_result = default_llm_client.generate_json(
+        raw_result = llm_client.generate_json(
             system_prompt=system_prompt,
             user_payload={"items": chunk},
             schema=load_shared_schema("structured-segments.schema.json"),
             schema_name="structured_segments",
-            max_output_tokens=settings.llm_segment_max_output_tokens,
+            max_output_tokens=max_output_tokens,
         )
         return _coerce_segment_list(raw_result, f"chunk {chunk_index} segmenting result")
     except Exception as e:
@@ -249,7 +271,11 @@ def _assign_t_ids(refined_items: list[dict]) -> list[dict]:
 
 # ── 청크 분할 ──────────────────────────────────────────
 
-def _split_into_chunks(refined_items: list[dict]) -> list[list[dict]]:
+def _split_into_chunks(
+    refined_items: list[dict],
+    chunk_duration: int | None = None,
+) -> list[list[dict]]:
+    chunk_duration = chunk_duration or settings.llm_segment_chunk_seconds
     chunks = []
     start = 0
 
@@ -257,7 +283,7 @@ def _split_into_chunks(refined_items: list[dict]) -> list[list[dict]]:
         end = start
         while end < len(refined_items):
             duration = refined_items[end]["start_time"] - refined_items[start]["start_time"]
-            if duration >= CHUNK_DURATION:
+            if duration >= chunk_duration:
                 break
             end += 1
 
@@ -276,10 +302,15 @@ def _split_into_chunks(refined_items: list[dict]) -> list[list[dict]]:
 
 # ── 경계 세그먼트 병합 + 평가 ────────────────────────────
 
-def _merge_boundaries_with_evaluation(chunk_results: list[list[dict]]) -> list[list[dict]]:
+def _merge_boundaries_with_evaluation(
+    chunk_results: list[list[dict]],
+    *,
+    llm_client=default_llm_client,
+    max_output_tokens: int | None = None,
+) -> list[list[dict]]:
     """
-    각 경계를 순차적으로 병합 → 평가 → 필요시 1회 재병합한다.
-    재병합 결과는 chunk_results[i+1]에 반영되어 다음 경계 처리에 영향을 준다.
+    각 경계를 순차적으로 병합하고 평가한 뒤 필요하면 한 번 재병합한다.
+    재병합 결과는 다음 경계 처리에 반영된다.
     """
     merged_boundaries = []
 
@@ -293,27 +324,49 @@ def _merge_boundaries_with_evaluation(chunk_results: list[list[dict]]) -> list[l
         segment_b = chunk_results[i + 1][0]
 
         # 1차 병합
-        merged = _call_merge_llm(segment_a, segment_b, feedback=None, evaluation=None)
+        merged = _call_merge_llm(
+            segment_a,
+            segment_b,
+            feedback=None,
+            evaluation=None,
+            llm_client=llm_client,
+            max_output_tokens=max_output_tokens,
+            context=f"merged boundary {i} / {i + 1}",
+        )
+        merged = _validate_merge_length(merged, i, i + 1)
 
-        # 평가
-        evaluation = _call_evaluate_merge_llm(chunk_results[i], chunk_results[i + 1], merged)
+        # 병합 결과 평가
+        evaluation = _call_evaluate_merge_llm(
+            chunk_results[i],
+            chunk_results[i + 1],
+            merged,
+            llm_client=llm_client,
+        )
 
-        # 평가 결과 fail이면 1회 재병합 (점수 + 기준 함께 전달)
+        # 평가 결과가 기준 미달이면 한 번 재병합
         if evaluation["overall_score"] < MERGE_PASS_THRESHOLD:
             feedback = evaluation.get("feedback") or (
-                "이전 시도에서 점수가 기준(0.6)보다 낮았습니다. "
-                "segment_a와 segment_b의 texts를 다시 처음부터 검토하여 "
-                "올바른 주제 경계를 찾아 다시 병합/분할하세요."
+                "이전 시도에서 점수가 기준보다 낮았습니다. "
+                "segment_a와 segment_b의 texts를 다시 검토하여 "
+                "올바른 주제 경계를 찾아 다시 병합하거나 분할하세요."
             )
+
             merged = _call_merge_llm(
-                segment_a, segment_b,
+                segment_a,
+                segment_b,
                 feedback=feedback,
-                evaluation=evaluation
+                evaluation=evaluation,
+                llm_client=llm_client,
+                max_output_tokens=max_output_tokens,
+                context=f"retried boundary {i} / {i + 1}",
             )
             merged = _validate_merge_length(merged, i, i + 1)
 
         # 재병합 결과를 다음 경계 처리에 반영
-        chunk_results[i + 1] = _apply_merge_to_next_chunk(chunk_results[i + 1], merged)
+        chunk_results[i + 1] = _apply_merge_to_next_chunk(
+            chunk_results[i + 1],
+            merged,
+        )
 
         merged_boundaries.append(merged)
 

@@ -6,6 +6,7 @@ import { TranscriptDocumentWindow } from './features/document/TranscriptDocument
 import { FloatingEvidenceWindow } from './features/evidence/FloatingEvidenceWindow'
 import { PromptPanel } from './features/prompt/PromptPanel'
 import { RecordingListPanel } from './features/recordings/RecordingListPanel'
+import { AddRecordingDialog } from './features/recordings/AddRecordingDialog'
 import { SummaryWorkspace } from './features/summary/SummaryWorkspace'
 import { TimestampPanel } from './features/timeline/TimestampPanel'
 import { useAudioController } from './hooks/useAudioController'
@@ -13,6 +14,7 @@ import {
   createFolder as createFolderRequest,
   deleteFolder as deleteFolderRequest,
   fetchBootstrap,
+  fetchProcessingOptions,
   fetchRecording,
   fetchRecordingStatus,
   hideRecordings,
@@ -33,6 +35,10 @@ import type {
   Segment,
   SummaryRef,
 } from './types/finalResult'
+import type {
+  PipelineSettings,
+  ProcessingOptions,
+} from './types/pipelineSettings'
 import {
   getAnalysisDuration,
   getEvidenceTexts,
@@ -70,11 +76,16 @@ const processingStatuses = new Set(['uploaded', 'processing'])
 
 function App() {
   const trackFillRef = useRef<HTMLDivElement | null>(null)
-  const failedUploadFilesRef = useRef(new Map<string, File>())
+  const failedUploadFilesRef = useRef(
+    new Map<string, { file: File; settings: PipelineSettings }>(),
+  )
 
   const [recordings, setRecordings] = useState(initialRecordings)
   const [selectedRecordingId, setSelectedRecordingId] = useState('club')
   const [isUploading, setIsUploading] = useState(false)
+  const [isAddRecordingOpen, setIsAddRecordingOpen] = useState(false)
+  const [processingOptions, setProcessingOptions] =
+    useState<ProcessingOptions | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
   const [draftRecordingSearchQuery, setDraftRecordingSearchQuery] = useState('')
   const [appliedRecordingSearchQuery, setAppliedRecordingSearchQuery] =
@@ -235,6 +246,14 @@ function App() {
   }, [])
 
   useEffect(() => {
+    fetchProcessingOptions()
+      .then(setProcessingOptions)
+      .catch((error: Error) => {
+        setApiError(`처리 설정 조회 실패: ${error.message}`)
+      })
+  }, [])
+
+  useEffect(() => {
     resetAudio(selectedRecording.segments[0]?.start_time ?? 0)
   }, [resetAudio, selectedRecording])
 
@@ -391,7 +410,10 @@ function App() {
     }
   }
 
-  async function addRecordingFile(file: File) {
+  async function addRecordingFile(
+    file: File,
+    pipelineSettings: PipelineSettings,
+  ) {
     const temporaryRecording: Recording = {
       id: `uploading-${Date.now()}`,
       name: file.name,
@@ -402,12 +424,15 @@ function App() {
 
     setIsUploading(true)
     setApiError(null)
-    failedUploadFilesRef.current.set(temporaryRecording.id, file)
+    failedUploadFilesRef.current.set(temporaryRecording.id, {
+      file,
+      settings: pipelineSettings,
+    })
     setRecordings((items) => [temporaryRecording, ...items])
     selectRecording(temporaryRecording)
 
     try {
-      const uploadedRecording = await uploadRecording(file)
+      const uploadedRecording = await uploadRecording(file, pipelineSettings)
       setRecordings((items) =>
         items.map((recording) =>
           recording.id === temporaryRecording.id ? uploadedRecording : recording,
@@ -432,6 +457,14 @@ function App() {
     } finally {
       setIsUploading(false)
     }
+  }
+
+  function openAddRecordingDialog() {
+    if (!processingOptions) {
+      setApiError('처리 설정을 아직 불러오지 못했습니다.')
+      return
+    }
+    setIsAddRecordingOpen(true)
   }
 
   async function pollRecordingUntilDone(recordingId: string) {
@@ -483,16 +516,16 @@ function App() {
 
   async function retryRecording(recording: Recording) {
     if (recording.id.startsWith('uploading-')) {
-      const failedUploadFile = failedUploadFilesRef.current.get(recording.id)
+      const failedUpload = failedUploadFilesRef.current.get(recording.id)
 
-      if (!failedUploadFile) {
+      if (!failedUpload) {
         setApiError('이 항목은 서버에 저장되지 않아 다시 업로드해야 합니다.')
         return
       }
 
       failedUploadFilesRef.current.delete(recording.id)
       setRecordings((items) => items.filter((item) => item.id !== recording.id))
-      await addRecordingFile(failedUploadFile)
+      await addRecordingFile(failedUpload.file, failedUpload.settings)
       return
     }
 
@@ -692,6 +725,18 @@ function App() {
         onTogglePlayback={togglePlayback}
       />
 
+      {isAddRecordingOpen && processingOptions ? (
+        <AddRecordingDialog
+          isSubmitting={isUploading}
+          processingOptions={processingOptions}
+          onCancel={() => setIsAddRecordingOpen(false)}
+          onSubmit={(file, settings) => {
+            setIsAddRecordingOpen(false)
+            void addRecordingFile(file, settings)
+          }}
+        />
+      ) : null}
+
       <section className="main-grid">
         <RecordingListPanel
           draftSearchQuery={draftRecordingSearchQuery}
@@ -705,7 +750,7 @@ function App() {
           sortDirection={recordingSortDirection}
           totalVisibleCount={folderScopedRecordings.length}
           onAddFolder={() => void addFolder()}
-          onAddRecordingFile={(file) => void addRecordingFile(file)}
+          onOpenAddRecording={openAddRecordingDialog}
           onApplySearch={() =>
             setAppliedRecordingSearchQuery(draftRecordingSearchQuery)
           }

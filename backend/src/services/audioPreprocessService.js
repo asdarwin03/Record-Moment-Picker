@@ -9,7 +9,11 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_AUDIO_FILTER = "highpass=f=80,lowpass=f=8000,loudnorm=I=-16:TP=-1.5:LRA=11";
 
 export async function preprocessAudioForAI(inputPath, options = {}) {
-  if (!isAudioPreprocessingEnabled(options.env)) {
+  const enabled =
+    typeof options.enabled === "boolean"
+      ? options.enabled
+      : isAudioPreprocessingEnabled(options.env);
+  if (!enabled) {
     return originalAudio(inputPath, "disabled");
   }
 

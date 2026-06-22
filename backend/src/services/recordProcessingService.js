@@ -1,5 +1,6 @@
 import { preprocessAudioForAI } from "./audioPreprocessService.js";
 import { requestAudioProcessing } from "./aiClient.js";
+import { getProcessingOptions } from "./pipelineSettingsService.js";
 import {
   completeRecord,
   failRecord,
@@ -17,12 +18,18 @@ const defaultDependencies = {
   markRecordProcessing,
 };
 
-export function queueRecordProcessing(recordId, filePath, dependencyOverrides = {}) {
+export function queueRecordProcessing(
+  recordId,
+  filePath,
+  pipelineSettings,
+  dependencyOverrides = {}
+) {
   const dependencies = {
     ...defaultDependencies,
     ...dependencyOverrides,
   };
   const activeRecordId = String(recordId);
+  const runtimeSettings = pipelineSettings || getProcessingOptions().defaults;
 
   if (activeRecordIds.has(activeRecordId)) {
     return false;
@@ -48,7 +55,9 @@ export function queueRecordProcessing(recordId, filePath, dependencyOverrides = 
 
     try {
       try {
-        preparedAudio = await dependencies.preprocessAudioForAI(filePath);
+        preparedAudio = await dependencies.preprocessAudioForAI(filePath, {
+          enabled: runtimeSettings.stt.preprocessingEnabled,
+        });
         if (preparedAudio.usedPreprocessed) {
           console.log(
             `[Backend][record:${recordId}] audio_preprocessing_completed path=${preparedAudio.audioPath}`
@@ -69,7 +78,10 @@ export function queueRecordProcessing(recordId, filePath, dependencyOverrides = 
         };
       }
 
-      result = await dependencies.requestAudioProcessing(preparedAudio.audioPath);
+      result = await dependencies.requestAudioProcessing(
+        preparedAudio.audioPath,
+        runtimeSettings
+      );
     } catch (error) {
       processingError = error;
     } finally {
@@ -97,7 +109,11 @@ export function resumePendingRecordProcessing() {
   const records = listProcessableRecords();
 
   records.forEach((record) => {
-    queueRecordProcessing(record.record_id, record.file_path);
+    queueRecordProcessing(
+      record.record_id,
+      record.file_path,
+      record.pipeline_settings
+    );
   });
 
   return records.length;

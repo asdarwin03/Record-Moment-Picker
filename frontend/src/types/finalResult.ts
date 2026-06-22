@@ -34,6 +34,7 @@ export type Recording = {
   segments: Segment[]
   audioUrl?: string
   error_message?: string | null
+  pipelineSettings?: PipelineSettings
   folderId?: string
   isHidden?: boolean
 }
@@ -68,3 +69,4 @@ export type FloatingWindowState = {
 }
 
 export type Tone = 'purple' | 'blue' | 'green' | 'orange'
+import type { PipelineSettings } from './pipelineSettings'
